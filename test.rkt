@@ -1,3 +1,3 @@
 #lang maxlang/parse-only
 
-2
+{let x 2; let x 3}

@@ -6,7 +6,7 @@
 
 (define-lex-abbrev digits (:+ digit))
 
-(define-lex-abbrev reserved-term (:or "set" "=>" "cond" "fn" reserved-char))
+(define-lex-abbrev reserved-term (:or "let" "=>" "cond" reserved-char))
 
 (define maxlang-lexer
   (lexer-srcloc
