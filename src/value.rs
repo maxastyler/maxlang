@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::vm::OpCode;
 
@@ -18,6 +18,7 @@ pub struct Function {
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub function: Rc<Function>,
+    pub upvalues: Vec<Rc<RefCell<UpValue>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ pub enum UpValue {
 #[derive(Debug, Clone)]
 pub enum Object {
     Closure(Rc<Closure>),
-    UpValue(Rc<UpValue>),
+    UpValue(Rc<RefCell<UpValue>>),
 }
 
 #[derive(Debug, Clone)]

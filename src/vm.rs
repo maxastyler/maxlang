@@ -1,6 +1,6 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use crate::value::{Chunk, Closure, Function, Value};
+use crate::value::{Chunk, Closure, Function, UpValue, Value};
 
 type R<X> = Result<X, &'static str>;
 
@@ -35,24 +35,26 @@ pub enum OpCode {
     /// Capture an upvalue from a local in the function above
     CaptureUpValueFromLocal(u8),
     /// Capture an upvalue from the above function's upvalues
-    CaptureUpValueFromNonLocal(u8)
+    CaptureUpValueFromNonLocal(u8),
 }
 
 #[derive(Debug)]
 pub struct Frame {
     pub pointer: usize,
     pub stack: Vec<Value>,
+    pub upvalues: Vec<Rc<RefCell<UpValue>>>,
     pub function: Rc<Function>,
     pub return_position: Option<usize>,
 }
 
 impl Frame {
-    pub fn new(function: Rc<Function>, return_position: usize) -> Frame {
+    pub fn new(closure: Closure, return_position: usize) -> Frame {
         Frame {
             pointer: 0,
-            stack: vec![Value::Nil; function.registers],
-            function,
+            stack: vec![Value::Nil; closure.function.registers],
+            function: closure.function,
             return_position: Some(return_position),
+            upvalues: closure.upvalues,
         }
     }
     pub fn opcode(&self) -> R<OpCode> {
@@ -77,12 +79,18 @@ impl VM {
         println!("OC: {:?}", oc);
         match oc {
             OpCode::Add(result, a1, a2) => self.add(result as usize, a1 as usize, a2 as usize)?,
-            OpCode::Call(c, r) => self.call(c as usize, r as usize)?,
+            OpCode::Call(r) => self.call(r)?,
             OpCode::Save(p) => self.save(p as usize)?,
             OpCode::Dump(f, t) => self.dump(f as usize, t as usize)?,
             OpCode::Return(value_position) => self.return_value(value_position as usize)?,
             OpCode::CloseUpValue(_) => todo!(),
             OpCode::CopyValue(_, _) => todo!(),
+            OpCode::LoadConstant(_, _) => todo!(),
+            OpCode::LoadUpValue(_, _) => todo!(),
+            OpCode::CloseValue(_) => todo!(),
+            OpCode::CreateClosure(_, _) => todo!(),
+            OpCode::CaptureUpValueFromLocal(_) => todo!(),
+            OpCode::CaptureUpValueFromNonLocal(_) => todo!(),
         }
         Ok(())
     }
@@ -110,12 +118,16 @@ impl VM {
         Ok(())
     }
 
-    fn call(&mut self, closure_position: usize, return_position: usize) -> R<()> {
+    /// Call the function that's on the temporaries stack in first position,
+    /// with the arguments after
+    fn call(&mut self, return_position: u8) -> R<()> {
         let f = self.last_frame_mut()?;
-        let c = f.stack[closure_position].closure()?;
+        let c = self.temporary_storage[0].closure()?;
+        let args = &self.temporary_storage[1..];
         f.pointer += 1;
-        self.frames
-            .push(Frame::new(c.function.clone(), return_position));
+        let mut next_frame = Frame::new(c.clone(), return_position as usize);
+
+        self.frames.push(next_frame);
 
         Ok(())
     }
