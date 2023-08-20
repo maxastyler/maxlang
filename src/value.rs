@@ -6,6 +6,7 @@ use crate::vm::OpCode;
 pub struct Chunk {
     pub opcodes: Vec<OpCode>,
     pub constants: Vec<Value>,
+    pub functions: Vec<Rc<Function>>,
 }
 
 #[derive(Debug)]

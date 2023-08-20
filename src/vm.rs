@@ -9,8 +9,8 @@ type REGISTER_WINDOW = u8;
 #[derive(Debug, Clone)]
 pub enum OpCode {
     Add(u8, u8, u8),
-    /// Call the function in 0 and put the result in 1
-    Call(u8, u8),
+    /// Call the function in temporary storage, with the arguments
+    Call(u8),
     /// Save the value in the given position
     /// to the VM's temporary storage
     Save(u8),
@@ -24,7 +24,18 @@ pub enum OpCode {
     /// Copy the value from 0 to 1
     CopyValue(u8, u8),
     /// Load the constant from the constants array at 0 to the position 1
-    LoadConstant(u8, u8)
+    LoadConstant(u8, u8),
+    /// Load the upvalue in the given upvalue slot into the given slot
+    LoadUpValue(u8, u8),
+    /// Free the value at the given index
+    CloseValue(u8),
+    /// Create closure. Takes the index of the function in the current chunk,
+    /// puts the result in the register .1
+    CreateClosure(u8, u8),
+    /// Capture an upvalue from a local in the function above
+    CaptureUpValueFromLocal(u8),
+    /// Capture an upvalue from the above function's upvalues
+    CaptureUpValueFromNonLocal(u8)
 }
 
 #[derive(Debug)]
