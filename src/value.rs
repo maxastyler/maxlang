@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::vm::OpCode;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Chunk {
     pub opcodes: Vec<OpCode>,
     pub constants: Vec<Value>,

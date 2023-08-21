@@ -48,13 +48,13 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn new(closure: Closure, return_position: usize) -> Frame {
+    pub fn new(closure: Rc<Closure>, return_position: usize) -> Frame {
         Frame {
             pointer: 0,
             stack: vec![Value::Nil; closure.function.registers],
-            function: closure.function,
+            function: closure.function.clone(),
             return_position: Some(return_position),
-            upvalues: closure.upvalues,
+            upvalues: closure.upvalues.clone(),
         }
     }
     pub fn opcode(&self) -> R<OpCode> {
@@ -98,7 +98,7 @@ impl VM {
     fn save(&mut self, position: usize) -> R<()> {
         let v = self.last_frame()?.stack[position].clone();
         self.temporary_storage.push(v);
-        self.increase_pointer(1);
+        self.increase_pointer(1)?;
         Ok(())
     }
 
@@ -107,23 +107,23 @@ impl VM {
         let slice_to_insert_into =
             &mut self.last_frame_mut()?.stack[pos_to..pos_to + &slice_to_copy_from.len()];
         slice_to_insert_into.clone_from_slice(&slice_to_copy_from);
-        self.increase_pointer(1);
+        self.increase_pointer(1)?;
         Ok(())
     }
 
     fn add(&mut self, result_position: usize, arg1: usize, arg2: usize) -> R<()> {
         let f = self.last_frame_mut()?;
         f.stack[result_position] = Value::Integer(f.stack[arg1].int()? + f.stack[arg2].int()?);
-        self.increase_pointer(1);
+        self.increase_pointer(1)?;
         Ok(())
     }
 
     /// Call the function that's on the temporaries stack in first position,
     /// with the arguments after
     fn call(&mut self, return_position: u8) -> R<()> {
-        let f = self.last_frame_mut()?;
         let c = self.temporary_storage[0].closure()?;
         let args = &self.temporary_storage[1..];
+        let f = self.last_frame_mut()?;
         f.pointer += 1;
         let mut next_frame = Frame::new(c.clone(), return_position as usize);
 

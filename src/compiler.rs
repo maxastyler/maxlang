@@ -5,7 +5,7 @@ use crate::{
     vm::OpCode,
 };
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct Symbol(String);
 
 pub struct Literal(i64);
@@ -19,25 +19,26 @@ pub enum Expression {
     Symbol(Symbol),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Named {
     pub name: Symbol,
     pub depth: usize,
     pub captured: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Local {
     Named(Named),
     Temporary,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct CUpValue {
     position: u8,
     local: bool,
 }
 
+#[derive(Clone, Debug)]
 pub struct Compiler {
     pub locals: Vec<Local>,
     pub upvalues: Vec<CUpValue>,
@@ -51,7 +52,8 @@ impl Compiler {
         Self {
             locals: vec![Local::Temporary; u8::MAX as usize],
             upvalues: vec![],
-            depth: previous.map(|x| x.depth + 1).unwrap_or(0),
+
+            depth: previous.as_ref().map(|x| x.depth + 1).unwrap_or(0),
             previous,
             chunk: Chunk {
                 constants: vec![],
@@ -195,12 +197,12 @@ impl Compiler {
     }
 
     fn function(&mut self, args: Vec<Symbol>, body: Expression, result_position: u8) {
-        let mut new_compiler = Compiler::new(Some(Box::new(*self)));
+        let mut new_compiler = Compiler::new(Some(Box::new(self.clone())));
         for (i, s) in args.iter().enumerate() {
             new_compiler.locals[i] = Local::Named(Named {
                 captured: false,
                 depth: new_compiler.depth,
-                name: *s,
+                name: (*s).clone(),
             });
         }
         new_compiler.depth += 1;
@@ -265,7 +267,10 @@ impl Compiler {
 
             i
         } else {
-            self.free_register_indices().next().unwrap()
+            self.free_register_indices()
+                .filter(|x| *x as u8 != result_position)
+                .next()
+                .unwrap()
         };
         self.replace_local(
             i as u8,
@@ -290,5 +295,28 @@ impl Compiler {
                 None
             }
         })
+    }
+}
+
+#[cfg(test)]
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn t() {
+        let mut c = Compiler::new(None);
+        c.compile(
+            Expression::Block(
+                // vec![],
+                vec![Expression::Assign(
+                    Symbol("Hi".into()),
+                    Box::new(Expression::Literal(Literal(2))),
+                )],
+                Box::new(Expression::Literal(Literal(0))),
+            ),
+            1,
+        );
+        println!("{:?}", c);
     }
 }
