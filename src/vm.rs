@@ -1,42 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::value::{Chunk, Closure, Function, UpValue, Value};
+use crate::{
+    opcode::OpCode,
+    value::{Chunk, Closure, Function, UpValue, Value},
+};
 
-type R<X> = Result<X, &'static str>;
-
-type REGISTER_WINDOW = u8;
-
-#[derive(Debug, Clone)]
-pub enum OpCode {
-    Add(u8, u8, u8),
-    /// Call the function in temporary storage, with the arguments
-    Call(u8),
-    /// Save the value in the given position
-    /// to the VM's temporary storage
-    Save(u8),
-    /// Dump the values from the given position
-    /// in the VM's temporary storage to the position starting with
-    Dump(u8, u8),
-    /// Return the value in the given register
-    Return(u8),
-    /// Close the upvalue in the given position
-    CloseUpValue(u8),
-    /// Copy the value from 0 to 1
-    CopyValue(u8, u8),
-    /// Load the constant from the constants array at 0 to the position 1
-    LoadConstant(u8, u8),
-    /// Load the upvalue in the given upvalue slot into the given slot
-    LoadUpValue(u8, u8),
-    /// Free the value at the given index
-    CloseValue(u8),
-    /// Create closure. Takes the index of the function in the current chunk,
-    /// puts the result in the register .1
-    CreateClosure(u8, u8),
-    /// Capture an upvalue from a local in the function above
-    CaptureUpValueFromLocal(u8),
-    /// Capture an upvalue from the above function's upvalues
-    CaptureUpValueFromNonLocal(u8),
-}
+use anyhow::{Context, Result};
 
 #[derive(Debug)]
 pub struct Frame {
@@ -57,13 +26,13 @@ impl Frame {
             upvalues: closure.upvalues.clone(),
         }
     }
-    pub fn opcode(&self) -> R<OpCode> {
+    pub fn opcode(&self) -> Result<OpCode<u8>> {
         self.function
             .chunk
             .opcodes
             .get(self.pointer)
             .cloned()
-            .ok_or("Could not get opcode for pointer")
+            .context("Could not get opcode for pointer")
     }
 }
 
@@ -74,7 +43,7 @@ pub struct VM {
 }
 
 impl VM {
-    pub fn step(&mut self) -> R<()> {
+    pub fn step(&mut self) -> Result<()> {
         let oc = self.last_frame()?.opcode()?;
         println!("OC: {:?}", oc);
         match oc {
@@ -95,14 +64,14 @@ impl VM {
         Ok(())
     }
 
-    fn save(&mut self, position: usize) -> R<()> {
+    fn save(&mut self, position: usize) -> Result<()> {
         let v = self.last_frame()?.stack[position].clone();
         self.temporary_storage.push(v);
         self.increase_pointer(1)?;
         Ok(())
     }
 
-    fn dump(&mut self, pos_from: usize, pos_to: usize) -> R<()> {
+    fn dump(&mut self, pos_from: usize, pos_to: usize) -> Result<()> {
         let slice_to_copy_from = self.temporary_storage.split_off(pos_from);
         let slice_to_insert_into =
             &mut self.last_frame_mut()?.stack[pos_to..pos_to + &slice_to_copy_from.len()];
@@ -111,7 +80,7 @@ impl VM {
         Ok(())
     }
 
-    fn add(&mut self, result_position: usize, arg1: usize, arg2: usize) -> R<()> {
+    fn add(&mut self, result_position: usize, arg1: usize, arg2: usize) -> Result<()> {
         let f = self.last_frame_mut()?;
         f.stack[result_position] = Value::Integer(f.stack[arg1].int()? + f.stack[arg2].int()?);
         self.increase_pointer(1)?;
@@ -120,7 +89,7 @@ impl VM {
 
     /// Call the function that's on the temporaries stack in first position,
     /// with the arguments after
-    fn call(&mut self, return_position: u8) -> R<()> {
+    fn call(&mut self, return_position: u8) -> Result<()> {
         let c = self.temporary_storage[0].closure()?;
         let args = &self.temporary_storage[1..];
         let f = self.last_frame_mut()?;
@@ -132,27 +101,27 @@ impl VM {
         Ok(())
     }
 
-    fn return_value(&mut self, return_value_pos: usize) -> R<()> {
+    fn return_value(&mut self, return_value_pos: usize) -> Result<()> {
         let v = self.last_frame()?.stack[return_value_pos].clone();
         let p = self
             .last_frame()?
             .return_position
-            .ok_or("No return position for current frame")?;
+            .context("Could not get return position")?;
         self.frames.pop();
         self.last_frame_mut()?.stack[p] = v;
         Ok(())
     }
 
-    fn increase_pointer(&mut self, amount: usize) -> R<()> {
+    fn increase_pointer(&mut self, amount: usize) -> Result<()> {
         self.last_frame_mut()?.pointer += amount;
         Ok(())
     }
 
-    fn last_frame_mut(&mut self) -> R<&mut Frame> {
-        self.frames.last_mut().ok_or("Could not get last frame")
+    fn last_frame_mut(&mut self) -> Result<&mut Frame> {
+        self.frames.last_mut().context("Could not get last frame as mutable reference")
     }
 
-    fn last_frame(&self) -> R<&Frame> {
-        self.frames.last().ok_or("Could not get last frame")
+    fn last_frame(&self) -> Result<&Frame> {
+        self.frames.last().context("Could not get last frame")
     }
 }

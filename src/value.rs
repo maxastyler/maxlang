@@ -1,10 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
+use anyhow::{Result, anyhow};
 
-use crate::vm::OpCode;
+use crate::opcode::OpCode;
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
-    pub opcodes: Vec<OpCode>,
+    pub opcodes: Vec<OpCode<u8>>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<Function>>,
 }
@@ -41,17 +42,17 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn int(&self) -> Result<i64, &'static str> {
+    pub fn int(&self) -> Result<i64> {
         match self {
             Value::Integer(i) => Ok(*i),
-            _ => Err("Not an integer"),
+            _ => Err(anyhow!("Not an integer!")),
         }
     }
 
-    pub fn closure(&self) -> Result<Rc<Closure>, &'static str> {
+    pub fn closure(&self) -> Result<Rc<Closure>> {
         match self {
             Value::Object(Object::Closure(c)) => Ok(c.clone()),
-            _ => Err("Not a closure"),
+            _ => Err(anyhow!("Not a closure!")),
         }
     }
 }
