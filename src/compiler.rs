@@ -15,6 +15,7 @@ pub struct Literal(pub i64);
 
 #[derive(Debug, Clone)]
 pub enum Expression {
+    Condition(Vec<(Expression, Expression)>, Box<Expression>),
     Call(Box<Expression>, Vec<Expression>),
     Assign(Symbol, Box<Expression>),
     Function(Vec<Symbol>, Box<Expression>),
@@ -114,7 +115,6 @@ impl<const N: usize> Compiler<N> {
     }
 
     pub fn compile_expression(&mut self, expression: Expression) -> Result<usize> {
-
         let expression_position = match expression {
             Expression::Call(function, arguments) => self.compile_call(*function, arguments)?,
             Expression::Assign(symbol, expression) => self.compile_assign(symbol, *expression)?,
@@ -124,6 +124,7 @@ impl<const N: usize> Compiler<N> {
             }
             Expression::Literal(literal) => self.compile_literal(literal)?,
             Expression::Symbol(symbol) => self.compile_symbol(symbol)?,
+            Expression::Condition(_, _) => todo!(),
         };
         Ok(expression_position)
     }
@@ -289,6 +290,8 @@ impl<const N: usize> Compiler<N> {
         Box::into_raw(new_compiler.previous.unwrap());
         Ok(closure_index)
     }
+
+    fn compile_conditional(&mut self) {}
 
     fn compile_literal(&mut self, literal: Literal) -> Result<usize> {
         self.chunk.constants.push(Value::Integer(literal.0));
