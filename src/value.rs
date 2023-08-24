@@ -13,6 +13,7 @@ pub struct Chunk {
 #[derive(Debug)]
 pub struct Function {
     pub chunk: Chunk,
+    pub arity: usize,
     pub registers: usize,
 }
 

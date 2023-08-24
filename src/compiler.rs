@@ -10,10 +10,10 @@ use crate::{
 #[derive(PartialEq, Clone, Debug)]
 pub struct Symbol(pub String);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Literal(pub i64);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression {
     Call(Box<Expression>, Vec<Expression>),
     Assign(Symbol, Box<Expression>),
@@ -21,6 +21,51 @@ pub enum Expression {
     Block(Vec<Expression>, Box<Expression>),
     Literal(Literal),
     Symbol(Symbol),
+}
+
+impl From<i64> for Expression {
+    fn from(value: i64) -> Self {
+        Expression::Literal(Literal(value))
+    }
+}
+
+impl From<(Expression, Vec<Expression>)> for Expression {
+    fn from(value: (Expression, Vec<Expression>)) -> Self {
+        Expression::Call(value.0.into(), value.1)
+    }
+}
+
+impl From<(&str, Expression)> for Expression {
+    fn from(value: (&str, Expression)) -> Self {
+        Expression::Assign(Symbol(value.0.into()), value.1.into())
+    }
+}
+
+impl From<(Vec<&str>, Expression)> for Expression {
+    fn from(value: (Vec<&str>, Expression)) -> Self {
+        Expression::Function(
+            value.0.into_iter().map(|x| Symbol(x.into())).collect(),
+            value.1.into(),
+        )
+    }
+}
+
+impl From<Vec<Expression>> for Expression {
+    fn from(value: Vec<Expression>) -> Self {
+        match &value[..] {
+            [ref ignored @ .., last] => Expression::Block(
+                ignored.into_iter().map(|x| (*x).clone()).collect(),
+                last.clone().into(),
+            ),
+            _ => panic!("Block expression vector should have 1 or more elements"),
+        }
+    }
+}
+
+impl From<&str> for Expression {
+    fn from(value: &str) -> Self {
+        Expression::Symbol(Symbol(value.into()))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -34,7 +79,7 @@ pub struct Named {
 pub enum Local {
     Named(Named),
     /// A temporary variable at the given depth
-    Temporary(usize),
+    Temporary,
     None,
 }
 
@@ -48,8 +93,7 @@ pub struct CUpValue {
 pub struct Compiler<const N: usize> {
     pub locals: [Local; N],
     pub upvalues: Vec<CUpValue>,
-    pub scope_depth: usize,
-    pub temporary_depth: usize,
+    pub depth: usize,
     pub previous: Option<Box<Compiler<N>>>,
     pub chunk: Chunk,
 }
@@ -59,8 +103,7 @@ impl<const N: usize> Compiler<N> {
         Self {
             locals: std::array::from_fn(|_| Local::None),
             upvalues: vec![],
-            scope_depth: previous.as_ref().map(|x| x.scope_depth + 1).unwrap_or(0),
-            temporary_depth: 0,
+            depth: previous.as_ref().map(|x| x.depth + 1).unwrap_or(0),
             previous,
             chunk: Chunk {
                 constants: vec![],
@@ -73,7 +116,6 @@ impl<const N: usize> Compiler<N> {
     pub fn compile_expression(&mut self, expression: Expression) -> Result<usize> {
         println!("COMPILER_STATE: {:?}", self);
         println!("EXPRESSION: {:?}\n\n", expression);
-        self.temporary_depth += 1;
         let expression_position = match expression {
             Expression::Call(function, arguments) => self.compile_call(*function, arguments)?,
             Expression::Assign(symbol, expression) => self.compile_assign(symbol, *expression)?,
@@ -84,7 +126,6 @@ impl<const N: usize> Compiler<N> {
             Expression::Literal(literal) => self.compile_literal(literal)?,
             Expression::Symbol(symbol) => self.compile_symbol(symbol)?,
         };
-        self.temporary_depth -= 1;
         Ok(expression_position)
     }
 
@@ -100,7 +141,7 @@ impl<const N: usize> Compiler<N> {
             self.clear_all_to_depth()?;
         }
         let result_index = self.find_free_register()?;
-        self.locals[result_index] = Local::Temporary(self.scope_depth - 1);
+        self.locals[result_index] = Local::Temporary;
         self.chunk
             .opcodes
             .push(OpCode::Call(result_index.try_into()?));
@@ -118,7 +159,7 @@ impl<const N: usize> Compiler<N> {
             self.chunk
                 .opcodes
                 .push(OpCode::LoadUpValue(i.try_into()?, out_index.try_into()?));
-            self.locals[out_index] = Local::Temporary(self.scope_depth - 1);
+            self.locals[out_index] = Local::Temporary;
             Ok(out_index)
         } else {
             Err(anyhow!("Couldn't get a symbol"))
@@ -160,14 +201,14 @@ impl<const N: usize> Compiler<N> {
             })
     }
 
-    /// Finds the symbol with the same name at the highest depth < self.depth
+    /// Finds the symbol with the same name at the highest depth <= self.depth
     fn find_local_symbol(&self, symbol: &Symbol) -> Option<usize> {
         self.locals
             .iter()
             .enumerate()
             .filter_map(|(i, l)| match l {
                 Local::Named(n @ Named { name, depth, .. })
-                    if *name == *symbol && *depth < self.scope_depth =>
+                    if *name == *symbol && *depth <= self.depth =>
                 {
                     Some((i, n))
                 }
@@ -178,75 +219,89 @@ impl<const N: usize> Compiler<N> {
     }
 
     fn compile_block(&mut self, ignored: Vec<Expression>, result: Expression) -> Result<usize> {
-        self.scope_depth += 1;
+        self.depth += 1;
         for expr in ignored {
             self.compile_expression(expr)?;
             self.clear_all_to_depth()?;
         }
         let last_exp_position = self.compile_expression(result)?;
         // Hoist the result up a position
-        self.scope_depth -= 1;
-        Ok(self.hoist_local(last_exp_position)?)
+        self.depth -= 1;
+        Ok(last_exp_position)
     }
 
-    /// Hoist a local up a depth, moving a named into a temporary
-    /// If it was a named local, and captured - copy the value and close the upvalue
-    fn hoist_local(&mut self, local_position: usize) -> Result<usize> {
-        match self.locals.get(local_position).cloned() {
-            Some(Local::Named(Named {
-                depth, captured, ..
-            })) => {
-                if captured {
-                    let new_position = self.find_free_register()?;
-                    self.chunk.opcodes.push(OpCode::CopyValue(
-                        local_position.try_into()?,
-                        new_position.try_into()?,
-                    ));
-                    self.chunk
-                        .opcodes
-                        .push(OpCode::CloseUpValue(local_position.try_into()?));
-                    self.locals[local_position] = Local::None;
-                    self.locals[new_position] = Local::Temporary(depth - 1);
-                    Ok(new_position)
-                } else {
-                    self.locals[local_position] = Local::Temporary(depth - 1);
-                    Ok(local_position)
-                }
-            }
-            Some(Local::Temporary(depth)) => {
-                self.locals[local_position] = Local::Temporary(depth - 1);
-                Ok(local_position)
-            }
-            _ => Err(anyhow!("Tried to hoist a local that was none")),
-        }
-    }
+    // /// Hoist a local up a depth, moving a named into a temporary
+    // /// If it was a named local, and captured - copy the value and close the upvalue
+    // fn hoist_local(&mut self, local_position: usize) -> Result<usize> {
+    //     match self.locals.get(local_position).cloned() {
+    //         Some(Local::Named(Named {
+    //             depth, captured, ..
+    //         })) => {
+    //             if captured {
+    //                 let new_position = self.find_free_register()?;
+    //                 self.chunk.opcodes.push(OpCode::CopyValue(
+    //                     local_position.try_into()?,
+    //                     new_position.try_into()?,
+    //                 ));
+    //                 self.chunk
+    //                     .opcodes
+    //                     .push(OpCode::CloseUpValue(local_position.try_into()?));
+    //                 self.locals[local_position] = Local::None;
+    //                 self.locals[new_position] = Local::Temporary(depth - 1);
+    //                 Ok(new_position)
+    //             } else {
+    //                 self.locals[local_position] = Local::Temporary(depth - 1);
+    //                 Ok(local_position)
+    //             }
+    //         }
+    //         Some(Local::Temporary(depth)) => {
+    //             self.locals[local_position] = Local::Temporary(depth - 1);
+    //             Ok(local_position)
+    //         }
+    //         _ => Err(anyhow!("Tried to hoist a local that was none")),
+    //     }
+    // }
 
-    fn compile_function(&mut self, args: Vec<Symbol>, body: Expression) -> Result<usize> {
-        let parent_box = unsafe { Box::from_raw(self) };
-        let mut new_compiler = Compiler::new(Some(parent_box));
+    fn compile_function_in_new_compiler(
+        &mut self,
+        args: Vec<Symbol>,
+        body: Expression,
+    ) -> Result<()> {
         for (i, s) in args.iter().enumerate() {
-            new_compiler.locals[i] = Local::Named(Named {
+            self.locals[i] = Local::Named(Named {
                 captured: false,
-                depth: new_compiler.scope_depth,
+                depth: self.depth,
                 name: (*s).clone(),
             });
         }
-        new_compiler.scope_depth += 1;
-        let body_result_position = new_compiler.compile_expression(body)?;
-        new_compiler
-            .chunk
+        self.depth += 1;
+        let body_result_position = self.compile_expression(body)?;
+        self.chunk
             .opcodes
             .push(OpCode::Return(body_result_position.try_into()?));
         // After the function returns, it's not really necessary to do these...
         // new_compiler.depth -= 1;
         // new_compiler.clear_locals_to_depth();
+        Ok(())
+    }
+
+    fn compile_function(&mut self, args: Vec<Symbol>, body: Expression) -> Result<usize> {
+        // probably ok lol?
+        let parent_box = unsafe { Box::from_raw(self) };
+
+        let arity = args.len();
+
+        let mut new_compiler = Compiler::new(Some(parent_box));
+        new_compiler.compile_function_in_new_compiler(args, body)?;
+
         self.chunk.functions.push(Rc::new(Function {
+            arity,
             chunk: new_compiler.chunk,
             registers: N,
         }));
         let f_index = self.chunk.functions.len() - 1;
         let closure_index = self.find_free_register()?;
-        self.locals[closure_index] = Local::Temporary(self.scope_depth - 1);
+        self.locals[closure_index] = Local::Temporary;
         self.chunk.opcodes.push(OpCode::CreateClosure(
             f_index.try_into()?,
             closure_index.try_into()?,
@@ -262,6 +317,8 @@ impl<const N: usize> Compiler<N> {
                     .push(OpCode::CaptureUpValueFromNonLocal(u.position.try_into()?))
             }
         }
+
+        // get back the reference to parent, so it's not dropped
         Box::into_raw(new_compiler.previous.unwrap());
         Ok(closure_index)
     }
@@ -273,7 +330,7 @@ impl<const N: usize> Compiler<N> {
             (self.chunk.constants.len() - 1).try_into()?,
             position.try_into()?,
         ));
-        self.locals[position] = Local::Temporary(self.temporary_depth);
+        self.locals[position] = Local::Temporary;
         Ok(position)
     }
 
@@ -288,7 +345,7 @@ impl<const N: usize> Compiler<N> {
             } else {
                 OpCode::CloseValue(local_index.try_into()?)
             }),
-            Local::Temporary(_) => self
+            Local::Temporary => self
                 .chunk
                 .opcodes
                 .push(OpCode::CloseValue(local_index.try_into()?)),
@@ -318,36 +375,45 @@ impl<const N: usize> Compiler<N> {
             .get(assign_location)
             .context("Could not get local")?
         {
-            Local::Temporary(_) => {
+            Local::Temporary => {
                 self.locals[assign_location] = Local::Named(Named {
                     captured: false,
-                    depth: self.scope_depth,
+                    depth: self.depth,
                     name: symbol,
-                })
+                });
+                Ok(assign_location)
             }
-            Local::Named(Named { name, .. }) if *name != symbol => {
-                let new_register = self.find_free_register()?;
-                self.chunk.opcodes.push(OpCode::CopyValue(
-                    assign_location.try_into()?,
-                    new_register.try_into()?,
-                ));
-                self.locals[new_register] = Local::Named(Named {
-                    name: symbol,
-                    depth: self.scope_depth,
-                    captured: false,
-                })
+            Local::Named(n) => {
+                if n.name != symbol {
+                    let new_register = self.find_free_register()?;
+                    self.chunk.opcodes.push(OpCode::CopyValue(
+                        assign_location.try_into()?,
+                        new_register.try_into()?,
+                    ));
+                    self.locals[new_register] = Local::Named(Named {
+                        name: symbol,
+                        depth: self.depth,
+                        captured: false,
+                    });
+                    Ok(new_register)
+                } else {
+                    if n.depth < self.depth {
+                        return Err(anyhow!(
+                            "Tried to assign to a child local with a depth less than current"
+                        ));
+                    }
+                    self.locals[assign_location] = Local::Named(Named {
+                        name: symbol,
+                        depth: self.depth,
+                        captured: n.captured,
+                    });
+                    Ok(assign_location)
+                }
             }
-            Local::None => {
-                return Err(anyhow!(
-                    "There should not be none in the location of an expression"
-                ))
-            }
-            _ => (),
-        };
-
-        println!("\n\nLOCALS:{:?}\n\n", self.locals);
-
-        Ok(assign_location)
+            Local::None => Err(anyhow!(
+                "There should not be none in the location of an expression"
+            )),
+        }
     }
 
     fn find_free_register(&self) -> Result<usize> {
@@ -373,8 +439,8 @@ impl<const N: usize> Compiler<N> {
             .iter()
             .enumerate()
             .filter_map(|(i, l)| match l {
-                Local::Named(Named { depth, .. }) if *depth > self.scope_depth => Some(i),
-                Local::Temporary(depth) if *depth > self.temporary_depth => Some(i),
+                Local::Named(Named { depth, .. }) if *depth > self.depth => Some(i),
+                Local::Temporary => Some(i),
                 _ => None,
             })
             .collect();

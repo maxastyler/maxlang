@@ -50,42 +50,13 @@ fn main() {
 
     // println!("{:?}", vm);
     let mut c: Compiler<10> = Compiler::new(None);
-
-    c.compile_expression(Expression::Block(
-        vec![
-            Expression::Assign(
-                Symbol("cool_fun".into()),
-                Box::new(Expression::Function(
-                    vec![],
-                    Box::new(Expression::Literal(Literal(2))),
-                )),
-            ),
-            Expression::Assign(
-                Symbol("other_function".into()),
-                Box::new(Expression::Function(
-                    vec![],
-                    Box::new(Expression::Literal(Literal(3))),
-                )),
-            ),
-            Expression::Assign(
-                Symbol("Hiii".into()),
-                Box::new(Expression::Symbol(Symbol("other_function".into()))),
-            ),
-            Expression::Assign(
-                Symbol("Hiioo".into()),
-                Box::new(Expression::Symbol(Symbol("other_function".into()))),
-            ),
-            // Expression::Literal(Literal(2))
-        ],
-        // vec![],
-        Box::new(Expression::Assign(
-            Symbol("other_function".into()),
-            Box::new(Expression::Call(
-                Box::new(Expression::Symbol(Symbol("cool_fun".into()))),
-                vec![],
-            )),
-        )),
-    ))
-    .unwrap();
+    let e: Expression = vec![
+        ("hi", (vec!["a", "b", "c"], vec!["a".into()].into()).into()).into(),
+        2.into(),
+        3.into(),
+        4.into(),
+    ]
+    .into();
+    c.compile_expression(e).unwrap();
     println!("{:?}", c);
 }
