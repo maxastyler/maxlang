@@ -14,6 +14,16 @@ mod vm;
 fn main() {
     let mut c: Compiler<256> = Compiler::new(None);
     let e: Expression = vec![
+        ("a", 3.into()).into(),
+        (
+            "fun_1",
+            (
+                vec![],
+                (vec![], Expression::Symbol(Symbol("a".into()))).into(),
+            )
+                .into(),
+        )
+            .into(),
         (
             "capd_fun",
             vec![("a", 3.into()).into(), (vec![], "a".into()).into()].into(),
@@ -35,6 +45,8 @@ fn main() {
     .into();
     println!("{:?}", e);
     c.compile_expression(e).unwrap();
+    println!("COMPILED");
+    println!("{:?}", c);
     let mut v = vm::VM {
         frames: vec![Frame::new(
             Rc::new(Closure {

@@ -115,6 +115,7 @@ impl<const N: usize> Compiler<N> {
     }
 
     pub fn compile_expression(&mut self, expression: Expression) -> Result<usize> {
+	println!("Compiling expression: {:?}", expression);
         let expression_position = match expression {
             Expression::Call(function, arguments) => self.compile_call(*function, arguments)?,
             Expression::Assign(symbol, expression) => self.compile_assign(symbol, *expression)?,
@@ -152,6 +153,7 @@ impl<const N: usize> Compiler<N> {
     /// If the value is an upvalue, emit an instruction to move the upvalue into a slot,
     /// then return the slot index
     fn compile_symbol(&mut self, symbol: Symbol) -> Result<usize> {
+	println!("FINDING SYMBOL");
         if let Some(i) = self.find_local_symbol(&symbol) {
             Ok(i)
         } else if let Some(i) = self.find_nonlocal_symbol(&symbol) {
@@ -167,6 +169,7 @@ impl<const N: usize> Compiler<N> {
     }
 
     fn find_nonlocal_symbol(&mut self, symbol: &Symbol) -> Option<usize> {
+	println!("FINDING NONLOCAL SYMBOL");
         if let Some(p) = &mut self.previous {
             if let Some(l_pos) = p.find_local_symbol(symbol) {
                 match p.locals.get_mut(l_pos as usize) {
@@ -177,7 +180,7 @@ impl<const N: usize> Compiler<N> {
                     local: true,
                     position: l_pos,
                 }))
-            } else if let Some(nl_pos) = self.find_nonlocal_symbol(symbol) {
+            } else if let Some(nl_pos) = p.find_nonlocal_symbol(symbol) {
                 Some(self.add_upvalue(CUpValue {
                     local: false,
                     position: nl_pos,
