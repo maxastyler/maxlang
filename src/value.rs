@@ -25,7 +25,7 @@ pub struct Closure {
 
 #[derive(Debug, Clone)]
 pub enum UpValue {
-    Open(usize),
+    Open{frame_number: usize, register: usize},
     Closed(Value),
 }
 

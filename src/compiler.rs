@@ -114,8 +114,7 @@ impl<const N: usize> Compiler<N> {
     }
 
     pub fn compile_expression(&mut self, expression: Expression) -> Result<usize> {
-        println!("COMPILER_STATE: {:?}", self);
-        println!("EXPRESSION: {:?}\n\n", expression);
+
         let expression_position = match expression {
             Expression::Call(function, arguments) => self.compile_call(*function, arguments)?,
             Expression::Assign(symbol, expression) => self.compile_assign(symbol, *expression)?,
@@ -229,38 +228,6 @@ impl<const N: usize> Compiler<N> {
         self.depth -= 1;
         Ok(last_exp_position)
     }
-
-    // /// Hoist a local up a depth, moving a named into a temporary
-    // /// If it was a named local, and captured - copy the value and close the upvalue
-    // fn hoist_local(&mut self, local_position: usize) -> Result<usize> {
-    //     match self.locals.get(local_position).cloned() {
-    //         Some(Local::Named(Named {
-    //             depth, captured, ..
-    //         })) => {
-    //             if captured {
-    //                 let new_position = self.find_free_register()?;
-    //                 self.chunk.opcodes.push(OpCode::CopyValue(
-    //                     local_position.try_into()?,
-    //                     new_position.try_into()?,
-    //                 ));
-    //                 self.chunk
-    //                     .opcodes
-    //                     .push(OpCode::CloseUpValue(local_position.try_into()?));
-    //                 self.locals[local_position] = Local::None;
-    //                 self.locals[new_position] = Local::Temporary(depth - 1);
-    //                 Ok(new_position)
-    //             } else {
-    //                 self.locals[local_position] = Local::Temporary(depth - 1);
-    //                 Ok(local_position)
-    //             }
-    //         }
-    //         Some(Local::Temporary(depth)) => {
-    //             self.locals[local_position] = Local::Temporary(depth - 1);
-    //             Ok(local_position)
-    //         }
-    //         _ => Err(anyhow!("Tried to hoist a local that was none")),
-    //     }
-    // }
 
     fn compile_function_in_new_compiler(
         &mut self,

@@ -49,14 +49,38 @@ fn main() {
     // }
 
     // println!("{:?}", vm);
-    let mut c: Compiler<10> = Compiler::new(None);
+    let mut c: Compiler<256> = Compiler::new(None);
     let e: Expression = vec![
-        ("hi", (vec!["a", "b", "c"], vec!["a".into()].into()).into()).into(),
-        2.into(),
+	("capd_fun", vec![("a", 3.into()).into(),
+	     (vec![], "a".into()).into()
+	].into()).into(),
+        ("ooh", 2.into()).into(),
+        ("hi", (vec!["a", "b", "c"], vec!["c".into(), "ooh".into()].into()).into()).into(),
         3.into(),
-        4.into(),
+        Expression::Call(Expression::Symbol(Symbol("hi".into())).into(), vec![2.into(), 3.into(), 4.into()]),
+        Expression::Call(Expression::Symbol(Symbol("capd_fun".into())).into(), vec![]),
     ]
     .into();
+    println!("{:?}", e);
     c.compile_expression(e).unwrap();
-    println!("{:?}", c);
+    let mut v = vm::VM {
+        frames: vec![Frame::new(
+            Rc::new(Closure {
+                function: Rc::new(Function {
+                    chunk: c.chunk,
+                    arity: 0,
+                    registers: 256,
+                }),
+                upvalues: vec![],
+            }),
+            0,
+            0,
+        )],
+        ..Default::default()
+    };
+    println!("{:?}", v);
+    for _ in 0..40 {
+        v.step();
+        println!("CURRENT STATE OF THE VM:\n{:?}\n\n\n\n", v);
+    }
 }
