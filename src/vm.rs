@@ -13,7 +13,7 @@ pub struct Frame {
     pub registers: Vec<Value>,
     pub upvalues: Vec<Rc<RefCell<UpValue>>>,
     pub function: Rc<Function>,
-    pub return_position: Option<usize>,
+    pub return_position: usize,
 }
 
 impl Debug for Frame {
@@ -46,7 +46,7 @@ impl Frame {
             pointer: 0,
             registers: vec![Value::Nil; closure.function.registers],
             function: closure.function.clone(),
-            return_position: Some(return_position),
+            return_position,
             upvalues: closure.upvalues.clone(),
         }
     }
@@ -70,9 +70,9 @@ pub struct VM {
 impl Debug for VM {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("VM {{\nframes: [\n")?;
-	for fr in self.frames.iter() {
-	    f.write_str(&format!("{:?}\n", fr))?;
-	}
+        for fr in self.frames.iter() {
+            f.write_str(&format!("{:?}\n", fr))?;
+        }
         f.write_str(&format!(
             "],\ntemporary_storage: {:?},\nopen_upvalues: {:?}\n}}",
             self.temporary_storage, self.open_upvalues
@@ -81,29 +81,50 @@ impl Debug for VM {
 }
 
 impl VM {
-    pub fn step(&mut self) -> Result<()> {
+    pub fn step(&mut self) -> Result<Option<Value>> {
         let oc = self.last_frame()?.opcode()?;
         println!("OC: {:?}", oc);
         match oc {
-            OpCode::Call(i) => self.call(i.into()),
-            OpCode::Save(i) => self.save(i.into()),
+            OpCode::Call(i) => self.call(i.into()).map(|_| None),
+            OpCode::Save(i) => self.save(i.into()).map(|_| None),
             OpCode::Return(i) => self.vm_return(i.into()),
-            OpCode::CloseUpValue(i) => self.close_upvalue(i.into()),
-            OpCode::CopyValue(from, target) => self.copy_value(from.into(), target.into()),
-            OpCode::LoadConstant(constant_index, target) => {
-                self.load_constant(constant_index.into(), target.into())
+            OpCode::CloseUpValue(i) => self.close_upvalue(i.into()).map(|_| None),
+            OpCode::CopyValue(from, target) => {
+                self.copy_value(from.into(), target.into()).map(|_| None)
             }
-            OpCode::LoadUpValue(uv_slot, target) => {
-                self.load_upvalue(uv_slot.into(), target.into())
-            }
-            OpCode::CloseValue(i) => self.close_value(i.into()),
-            OpCode::CreateClosure(function_index, return_register) => {
-                self.create_closure(function_index.into(), return_register.into())
-            }
+            OpCode::LoadConstant(constant_index, target) => self
+                .load_constant(constant_index.into(), target.into())
+                .map(|_| None),
+            OpCode::LoadUpValue(uv_slot, target) => self
+                .load_upvalue(uv_slot.into(), target.into())
+                .map(|_| None),
+            OpCode::CloseValue(i) => self.close_value(i.into()).map(|_| None),
+            OpCode::TailCall => self.tail_call().map(|_| None),
+            OpCode::CreateClosure(function_index, return_register) => self
+                .create_closure(function_index.into(), return_register.into())
+                .map(|_| None),
             _ => Err(anyhow!(
                 "Bytecode incorrect. Tried to capture upvalue without creating a closure"
             )),
         }
+    }
+
+    fn tail_call(&mut self) -> Result<()> {
+        let last_frame = self.frames.pop().context("No current frame to pop")?;
+        let closure = self
+            .temporary_storage
+            .get(0)
+            .context("Could not get closure from temporary storage")?
+            .closure()?;
+        let mut new_frame = Frame::new(closure, last_frame.depth + 1, last_frame.return_position);
+        new_frame.registers.splice(
+            0..new_frame.function.arity,
+            self.temporary_storage
+                .drain(1..(new_frame.function.arity + 1)),
+        );
+        self.frames.push(new_frame);
+        self.temporary_storage.clear();
+        Ok(())
     }
 
     fn capture_upvalue_from_local(
@@ -191,18 +212,19 @@ impl VM {
         Ok(())
     }
 
-    fn vm_return(&mut self, return_value_position: usize) -> Result<()> {
+    fn vm_return(&mut self, return_value_position: usize) -> Result<Option<Value>> {
         let value = self
             .last_frame_mut()?
             .registers
             .swap_remove(return_value_position);
-        let return_position = self
-            .last_frame()?
-            .return_position
-            .context("Could not get return position")?;
+        let return_position = self.last_frame()?.return_position;
         self.frames.pop();
-        self.last_frame_mut()?.registers[return_position] = value;
-        Ok(())
+        if self.frames.is_empty() {
+            Ok(Some(value))
+        } else {
+            self.last_frame_mut()?.registers[return_position] = value;
+            Ok(None)
+        }
     }
 
     fn close_upvalue(&mut self, register_position: usize) -> Result<()> {

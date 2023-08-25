@@ -10,6 +10,8 @@ pub enum OpCode<T: Into<usize> + Debug + Clone + TryFrom<usize>> {
     Save(T),
     /// Return the value in the given register
     Return(T),
+    /// Create a tail call
+    TailCall,
     /// Close the upvalue in the given position
     CloseUpValue(T),
     /// Copy the value from 0 to 1
@@ -23,7 +25,7 @@ pub enum OpCode<T: Into<usize> + Debug + Clone + TryFrom<usize>> {
     /// Create closure. Takes the index of the function in the current chunk,
     /// puts the result in the register .1
     CreateClosure(T, T),
-    
+
     //// Capture upvalues only ever appear after CreateClosure
     /// Capture an upvalue from a local in the function above
     CaptureUpValueFromLocal(T),

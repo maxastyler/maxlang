@@ -44,17 +44,13 @@ fn main() {
     ]
     .into();
     println!("{:?}", e);
-    c.compile_expression(e).unwrap();
+    let f = c.compile_expression_as_function(e).unwrap();
     println!("COMPILED");
     println!("{:?}", c);
     let mut v = vm::VM {
         frames: vec![Frame::new(
             Rc::new(Closure {
-                function: Rc::new(Function {
-                    chunk: c.chunk,
-                    arity: 0,
-                    registers: 256,
-                }),
+                function: f,
                 upvalues: vec![],
             }),
             0,
@@ -63,9 +59,12 @@ fn main() {
         ..Default::default()
     };
     println!("{:?}", v);
-    for _ in 0..40 {
-        v.step();
-        // println!("CURRENT STATE OF THE VM:\n{:?}\n\n\n\n", v);
-    }
+    let v = loop {
+        match v.step() {
+            Ok(Some(v)) => break v,
+            _ => (),
+        }
+    };
+
     println!("{:?}", v);
 }

@@ -4,18 +4,30 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::{
     opcode::OpCode,
-    value::{Chunk, Function, Value},
+    value::{Chunk, Closure, Function, Value},
 };
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Symbol(pub String);
 
 #[derive(Debug, Clone)]
-pub struct Literal(pub i64);
+pub enum Literal {
+    Int(i64),
+    Bool(bool),
+}
+
+impl From<Literal> for Value {
+    fn from(value: Literal) -> Self {
+        match value {
+            Literal::Int(i) => Value::Integer(i),
+            Literal::Bool(b) => Value::Bool(b),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Expression {
-    Condition(Vec<(Expression, Expression)>, Box<Expression>),
+    // Condition(Vec<(Expression, Expression)>, Box<Expression>),
     Call(Box<Expression>, Vec<Expression>),
     Assign(Symbol, Box<Expression>),
     Function(Vec<Symbol>, Box<Expression>),
@@ -26,7 +38,13 @@ pub enum Expression {
 
 impl From<i64> for Expression {
     fn from(value: i64) -> Self {
-        Expression::Literal(Literal(value))
+        Expression::Literal(Literal::Int(value))
+    }
+}
+
+impl From<bool> for Expression {
+    fn from(value: bool) -> Self {
+        Expression::Literal(Literal::Bool(value))
     }
 }
 
@@ -114,62 +132,107 @@ impl<const N: usize> Compiler<N> {
         }
     }
 
-    pub fn compile_expression(&mut self, expression: Expression) -> Result<usize> {
-	println!("Compiling expression: {:?}", expression);
+    /// Compile a given expression as the body of a function with no arguments
+    pub fn compile_expression_as_function(
+        &mut self,
+        expression: Expression,
+    ) -> Result<Rc<Function>> {
+        self.compile_function(vec![], expression, false)?
+            .context("Function compilation didn't put closure in a register")?;
+        self.chunk
+            .functions
+            .last()
+            .context("no function in chunk")
+            .map(|x| x.clone())
+    }
+
+    fn compile_expression(
+        &mut self,
+        expression: Expression,
+        tail_position: bool,
+    ) -> Result<Option<usize>> {
         let expression_position = match expression {
-            Expression::Call(function, arguments) => self.compile_call(*function, arguments)?,
-            Expression::Assign(symbol, expression) => self.compile_assign(symbol, *expression)?,
-            Expression::Function(arguments, body) => self.compile_function(arguments, *body)?,
-            Expression::Block(ignored_expressions, result_expression) => {
-                self.compile_block(ignored_expressions, *result_expression)?
+            Expression::Call(function, arguments) => {
+                self.compile_call(*function, arguments, tail_position)?
             }
-            Expression::Literal(literal) => self.compile_literal(literal)?,
-            Expression::Symbol(symbol) => self.compile_symbol(symbol)?,
-            Expression::Condition(_, _) => todo!(),
+            Expression::Assign(symbol, expression) => {
+                self.compile_assign(symbol, *expression, tail_position)?
+            }
+            Expression::Function(arguments, body) => {
+                self.compile_function(arguments, *body, tail_position)?
+            }
+            Expression::Block(ignored_expressions, result_expression) => {
+                self.compile_block(ignored_expressions, *result_expression, tail_position)?
+            }
+            Expression::Literal(literal) => self.compile_literal(literal, tail_position)?,
+            Expression::Symbol(symbol) => self.compile_symbol(symbol, tail_position)?,
+            // Expression::Condition(_, _) => todo!(),
         };
         Ok(expression_position)
     }
 
-    fn compile_call(&mut self, function: Expression, arguments: Vec<Expression>) -> Result<usize> {
-        let function_index = self.compile_expression(function)?;
+    fn compile_tail_expression(&mut self, expression: Expression) -> Result<()> {
+        self.compile_expression(expression, true)?;
+        Ok(())
+    }
+
+    fn compile_non_tail_expression(&mut self, expression: Expression) -> Result<usize> {
+        Ok(self
+            .compile_expression(expression, false)?
+            .context("Non tail expression returned no position")?)
+    }
+
+    fn compile_call(
+        &mut self,
+        function: Expression,
+        arguments: Vec<Expression>,
+        tail_position: bool,
+    ) -> Result<Option<usize>> {
+        let function_index = self.compile_non_tail_expression(function)?;
         self.chunk
             .opcodes
             .push(OpCode::Save(function_index.try_into()?));
         self.clear_all_to_depth()?;
         for arg in arguments {
-            let a_index = self.compile_expression(arg)?;
+            let a_index = self.compile_non_tail_expression(arg)?;
             self.chunk.opcodes.push(OpCode::Save(a_index.try_into()?));
             self.clear_all_to_depth()?;
         }
-        let result_index = self.find_free_register()?;
-        self.locals[result_index] = Local::Temporary;
-        self.chunk
-            .opcodes
-            .push(OpCode::Call(result_index.try_into()?));
-        Ok(result_index)
+
+        if tail_position {
+            self.chunk.opcodes.push(OpCode::TailCall);
+            Ok(None)
+        } else {
+            let result_index = self.find_free_register()?;
+            self.locals[result_index] = Local::Temporary;
+            self.chunk
+                .opcodes
+                .push(OpCode::Call(result_index.try_into()?));
+            Ok(Some(result_index))
+        }
     }
 
     /// Get the value associated to the given symbol, and return the slot it is in
     /// If the value is an upvalue, emit an instruction to move the upvalue into a slot,
     /// then return the slot index
-    fn compile_symbol(&mut self, symbol: Symbol) -> Result<usize> {
-	println!("FINDING SYMBOL");
-        if let Some(i) = self.find_local_symbol(&symbol) {
-            Ok(i)
+    fn compile_symbol(&mut self, symbol: Symbol, tail_position: bool) -> Result<Option<usize>> {
+        let result_index = if let Some(i) = self.find_local_symbol(&symbol) {
+            i
         } else if let Some(i) = self.find_nonlocal_symbol(&symbol) {
             let out_index = self.find_free_register()?;
             self.chunk
                 .opcodes
                 .push(OpCode::LoadUpValue(i.try_into()?, out_index.try_into()?));
             self.locals[out_index] = Local::Temporary;
-            Ok(out_index)
+            out_index
         } else {
-            Err(anyhow!("Couldn't get a symbol"))
-        }
+            return Err(anyhow!("Couldn't get a symbol"));
+        };
+        self.maybe_push_return(tail_position, result_index)
     }
 
     fn find_nonlocal_symbol(&mut self, symbol: &Symbol) -> Option<usize> {
-	println!("FINDING NONLOCAL SYMBOL");
+        println!("FINDING NONLOCAL SYMBOL");
         if let Some(p) = &mut self.previous {
             if let Some(l_pos) = p.find_local_symbol(symbol) {
                 match p.locals.get_mut(l_pos as usize) {
@@ -221,16 +284,24 @@ impl<const N: usize> Compiler<N> {
             .map(|(i, _)| i)
     }
 
-    fn compile_block(&mut self, ignored: Vec<Expression>, result: Expression) -> Result<usize> {
+    fn compile_block(
+        &mut self,
+        ignored: Vec<Expression>,
+        result: Expression,
+        tail_position: bool,
+    ) -> Result<Option<usize>> {
         self.depth += 1;
         for expr in ignored {
-            self.compile_expression(expr)?;
+            self.compile_non_tail_expression(expr)?;
             self.clear_all_to_depth()?;
         }
-        let last_exp_position = self.compile_expression(result)?;
-        // Hoist the result up a position
+        let res = if tail_position {
+            self.compile_tail_expression(result).map(|_| None)
+        } else {
+            self.compile_non_tail_expression(result).map(|x| Some(x))
+        };
         self.depth -= 1;
-        Ok(last_exp_position)
+        res
     }
 
     fn compile_function_in_new_compiler(
@@ -246,17 +317,20 @@ impl<const N: usize> Compiler<N> {
             });
         }
         self.depth += 1;
-        let body_result_position = self.compile_expression(body)?;
-        self.chunk
-            .opcodes
-            .push(OpCode::Return(body_result_position.try_into()?));
+        self.compile_tail_expression(body)?;
+
         // After the function returns, it's not really necessary to do these...
         // new_compiler.depth -= 1;
         // new_compiler.clear_locals_to_depth();
         Ok(())
     }
 
-    fn compile_function(&mut self, args: Vec<Symbol>, body: Expression) -> Result<usize> {
+    fn compile_function(
+        &mut self,
+        args: Vec<Symbol>,
+        body: Expression,
+        tail_position: bool,
+    ) -> Result<Option<usize>> {
         // probably ok lol?
         let parent_box = unsafe { Box::from_raw(self) };
 
@@ -291,20 +365,35 @@ impl<const N: usize> Compiler<N> {
 
         // get back the reference to parent, so it's not dropped
         Box::into_raw(new_compiler.previous.unwrap());
-        Ok(closure_index)
+        self.maybe_push_return(tail_position, closure_index)
     }
 
     fn compile_conditional(&mut self) {}
 
-    fn compile_literal(&mut self, literal: Literal) -> Result<usize> {
-        self.chunk.constants.push(Value::Integer(literal.0));
+    fn compile_literal(&mut self, literal: Literal, tail_position: bool) -> Result<Option<usize>> {
+        self.chunk.constants.push(literal.into());
         let position = self.find_free_register()?;
         self.chunk.opcodes.push(OpCode::LoadConstant(
             (self.chunk.constants.len() - 1).try_into()?,
             position.try_into()?,
         ));
         self.locals[position] = Local::Temporary;
-        Ok(position)
+        self.maybe_push_return(tail_position, position)
+    }
+
+    fn maybe_push_return(
+        &mut self,
+        tail_position: bool,
+        value_index: usize,
+    ) -> Result<Option<usize>> {
+        if tail_position {
+            self.chunk
+                .opcodes
+                .push(OpCode::Return(value_index.try_into()?));
+            Ok(None)
+        } else {
+            Ok(Some(value_index))
+        }
     }
 
     fn clear_local(&mut self, local_index: usize) -> Result<()> {
@@ -337,55 +426,64 @@ impl<const N: usize> Compiler<N> {
         })
     }
 
-    fn compile_assign(&mut self, symbol: Symbol, expression: Expression) -> Result<usize> {
-        let assign_location = self.compile_expression(expression)?;
-        // If the compiled expression is a temporary, then change it to named
-        // If the compiled expression is named and it has the same name, then do nothing
-        // If the compiled expression is named and it has a different name,
-        // then copy the value to a new register, and give this new slot a name
-        match self
-            .locals
-            .get(assign_location)
-            .context("Could not get local")?
-        {
-            Local::Temporary => {
-                self.locals[assign_location] = Local::Named(Named {
-                    captured: false,
-                    depth: self.depth,
-                    name: symbol,
-                });
-                Ok(assign_location)
-            }
-            Local::Named(n) => {
-                if n.name != symbol {
-                    let new_register = self.find_free_register()?;
-                    self.chunk.opcodes.push(OpCode::CopyValue(
-                        assign_location.try_into()?,
-                        new_register.try_into()?,
-                    ));
-                    self.locals[new_register] = Local::Named(Named {
-                        name: symbol,
-                        depth: self.depth,
-                        captured: false,
-                    });
-                    Ok(new_register)
-                } else {
-                    if n.depth < self.depth {
-                        return Err(anyhow!(
-                            "Tried to assign to a child local with a depth less than current"
-                        ));
-                    }
+    fn compile_assign(
+        &mut self,
+        symbol: Symbol,
+        expression: Expression,
+        tail_position: bool,
+    ) -> Result<Option<usize>> {
+        if tail_position {
+            self.compile_tail_expression(expression).map(|_| None)
+        } else {
+            let assign_location = self.compile_non_tail_expression(expression)?;
+            // If the compiled expression is a temporary, then change it to named
+            // If the compiled expression is named and it has the same name, then do nothing
+            // If the compiled expression is named and it has a different name,
+            // then copy the value to a new register, and give this new slot a name
+            match self
+                .locals
+                .get(assign_location)
+                .context("Could not get local")?
+            {
+                Local::Temporary => {
                     self.locals[assign_location] = Local::Named(Named {
-                        name: symbol,
+                        captured: false,
                         depth: self.depth,
-                        captured: n.captured,
+                        name: symbol,
                     });
-                    Ok(assign_location)
+                    Ok(Some(assign_location))
                 }
+                Local::Named(n) => {
+                    if n.name != symbol {
+                        let new_register = self.find_free_register()?;
+                        self.chunk.opcodes.push(OpCode::CopyValue(
+                            assign_location.try_into()?,
+                            new_register.try_into()?,
+                        ));
+                        self.locals[new_register] = Local::Named(Named {
+                            name: symbol,
+                            depth: self.depth,
+                            captured: false,
+                        });
+                        Ok(Some(new_register))
+                    } else {
+                        if n.depth < self.depth {
+                            return Err(anyhow!(
+                                "Tried to assign to a child local with a depth less than current"
+                            ));
+                        }
+                        self.locals[assign_location] = Local::Named(Named {
+                            name: symbol,
+                            depth: self.depth,
+                            captured: n.captured,
+                        });
+                        Ok(Some(assign_location))
+                    }
+                }
+                Local::None => Err(anyhow!(
+                    "There should not be none in the location of an expression"
+                )),
             }
-            Local::None => Err(anyhow!(
-                "There should not be none in the location of an expression"
-            )),
         }
     }
 

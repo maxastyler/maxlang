@@ -38,6 +38,7 @@ pub enum Object {
 #[derive(Debug, Clone)]
 pub enum Value {
     Integer(i64),
+    Bool(bool),
     Nil,
     Object(Object),
 }
