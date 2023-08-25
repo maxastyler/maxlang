@@ -1,12 +1,17 @@
 use std::rc::Rc;
 
-use compiler::{Compiler, Expression, Literal, Symbol};
+use compiler::Compiler;
 use value::{Chunk, Value};
 use vm::Frame;
 
-use crate::value::{Closure, Function};
+use crate::{
+    expression::{Expression, Symbol},
+    value::{Closure, Function},
+};
 
 mod compiler;
+mod expression;
+mod native_function;
 mod opcode;
 mod value;
 mod vm;
@@ -43,10 +48,21 @@ fn main() {
         Expression::Call(Expression::Symbol(Symbol("capd_fun".into())).into(), vec![]),
     ]
     .into();
-    println!("{:?}", e);
-    let f = c.compile_expression_as_function(e).unwrap();
-    println!("COMPILED");
-    println!("{:?}", c);
+    let e: Expression = Expression::Condition(
+        vec![
+            (("woah", false.into()).into(), true.into()),
+            (true.into(), Expression::Symbol(Symbol("woah".into()))),
+        ],
+        Box::new(2.into()),
+    );
+    let e: Expression = Expression::Call(
+        Expression::Symbol(Symbol("+".into())).into(),
+        vec![2.into(), 3.into()],
+    )
+    .into();
+    let fn_body: Expression = Expression::Condition();
+    let fib: Expression = vec![("fib", (vec!["self", "n"], fn_body.into())).into()].into();
+    let f = c.compile_expression_as_function(fib).unwrap();
     let mut v = vm::VM {
         frames: vec![Frame::new(
             Rc::new(Closure {
@@ -58,10 +74,10 @@ fn main() {
         )],
         ..Default::default()
     };
-    println!("{:?}", v);
     let v = loop {
         match v.step() {
             Ok(Some(v)) => break v,
+            Err(e) => panic!("{:?}", e),
             _ => (),
         }
     };

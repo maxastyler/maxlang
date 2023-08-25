@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Result};
 use std::{cell::RefCell, rc::Rc};
-use anyhow::{Result, anyhow};
 
-use crate::opcode::OpCode;
+use crate::{expression::Literal, native_function::NativeFunction, opcode::OpCode};
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
@@ -25,7 +25,10 @@ pub struct Closure {
 
 #[derive(Debug, Clone)]
 pub enum UpValue {
-    Open{frame_number: usize, register: usize},
+    Open {
+        frame_number: usize,
+        register: usize,
+    },
     Closed(Value),
 }
 
@@ -40,7 +43,17 @@ pub enum Value {
     Integer(i64),
     Bool(bool),
     Nil,
+    NativeFunction(NativeFunction),
     Object(Object),
+}
+
+impl From<Literal> for Value {
+    fn from(value: Literal) -> Self {
+        match value {
+            Literal::Int(i) => Value::Integer(i),
+            Literal::Bool(b) => Value::Bool(b),
+        }
+    }
 }
 
 impl Value {

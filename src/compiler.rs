@@ -3,89 +3,11 @@ use std::rc::Rc;
 use anyhow::{anyhow, Context, Result};
 
 use crate::{
+    expression::{Expression, Literal, Symbol},
+    native_function::NativeFunction,
     opcode::OpCode,
     value::{Chunk, Closure, Function, Value},
 };
-
-#[derive(PartialEq, Clone, Debug)]
-pub struct Symbol(pub String);
-
-#[derive(Debug, Clone)]
-pub enum Literal {
-    Int(i64),
-    Bool(bool),
-}
-
-impl From<Literal> for Value {
-    fn from(value: Literal) -> Self {
-        match value {
-            Literal::Int(i) => Value::Integer(i),
-            Literal::Bool(b) => Value::Bool(b),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Expression {
-    // Condition(Vec<(Expression, Expression)>, Box<Expression>),
-    Call(Box<Expression>, Vec<Expression>),
-    Assign(Symbol, Box<Expression>),
-    Function(Vec<Symbol>, Box<Expression>),
-    Block(Vec<Expression>, Box<Expression>),
-    Literal(Literal),
-    Symbol(Symbol),
-}
-
-impl From<i64> for Expression {
-    fn from(value: i64) -> Self {
-        Expression::Literal(Literal::Int(value))
-    }
-}
-
-impl From<bool> for Expression {
-    fn from(value: bool) -> Self {
-        Expression::Literal(Literal::Bool(value))
-    }
-}
-
-impl From<(Expression, Vec<Expression>)> for Expression {
-    fn from(value: (Expression, Vec<Expression>)) -> Self {
-        Expression::Call(value.0.into(), value.1)
-    }
-}
-
-impl From<(&str, Expression)> for Expression {
-    fn from(value: (&str, Expression)) -> Self {
-        Expression::Assign(Symbol(value.0.into()), value.1.into())
-    }
-}
-
-impl From<(Vec<&str>, Expression)> for Expression {
-    fn from(value: (Vec<&str>, Expression)) -> Self {
-        Expression::Function(
-            value.0.into_iter().map(|x| Symbol(x.into())).collect(),
-            value.1.into(),
-        )
-    }
-}
-
-impl From<Vec<Expression>> for Expression {
-    fn from(value: Vec<Expression>) -> Self {
-        match &value[..] {
-            [ref ignored @ .., last] => Expression::Block(
-                ignored.into_iter().map(|x| (*x).clone()).collect(),
-                last.clone().into(),
-            ),
-            _ => panic!("Block expression vector should have 1 or more elements"),
-        }
-    }
-}
-
-impl From<&str> for Expression {
-    fn from(value: &str) -> Self {
-        Expression::Symbol(Symbol(value.into()))
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct Named {
@@ -97,8 +19,9 @@ pub struct Named {
 #[derive(Clone, Debug)]
 pub enum Local {
     Named(Named),
-    /// A temporary variable at the given depth
     Temporary,
+    /// A reserved local should always be turned into a temporary/named by the end of the function
+    Reserved,
     None,
 }
 
@@ -166,9 +89,72 @@ impl<const N: usize> Compiler<N> {
             }
             Expression::Literal(literal) => self.compile_literal(literal, tail_position)?,
             Expression::Symbol(symbol) => self.compile_symbol(symbol, tail_position)?,
-            // Expression::Condition(_, _) => todo!(),
+            Expression::Condition(conds, fallthrough) => {
+                self.compile_condition(conds, *fallthrough, tail_position)?
+            }
         };
         Ok(expression_position)
+    }
+
+    fn compile_condition(
+        &mut self,
+        conditional_expressions: Vec<(Expression, Expression)>,
+        fallthrough_expression: Expression,
+        tail_position: bool,
+    ) -> Result<Option<usize>> {
+        let result_pos = self.find_free_register()?;
+        self.locals[result_pos] = Local::Reserved;
+        self.depth += 1;
+        let mut previous_position;
+        let mut exit_jumps: Vec<usize> = vec![];
+        for (ce, re) in conditional_expressions {
+            let compiled_position = self.compile_non_tail_expression(ce)?;
+            previous_position = self.chunk.opcodes.len();
+            self.chunk.opcodes.push(OpCode::Crash);
+            self.depth += 1;
+            if tail_position {
+                self.compile_tail_expression(re)?;
+            } else {
+                let pos = self.compile_non_tail_expression(re)?;
+                self.chunk
+                    .opcodes
+                    .push(OpCode::CopyValue(pos.try_into()?, result_pos.try_into()?));
+            }
+            self.depth -= 1;
+            self.clear_all_to_depth()?;
+            exit_jumps.push(self.chunk.opcodes.len());
+            self.chunk.opcodes.push(OpCode::Crash);
+
+            self.chunk.opcodes[previous_position] = OpCode::JumpToOffsetIfFalse(
+                compiled_position.try_into()?,
+                (self.chunk.opcodes.len() - previous_position).try_into()?,
+            );
+        }
+        self.depth += 1;
+        if tail_position {
+            self.compile_tail_expression(fallthrough_expression)?;
+        } else {
+            let pos = self.compile_non_tail_expression(fallthrough_expression)?;
+            self.chunk
+                .opcodes
+                .push(OpCode::CopyValue(pos.try_into()?, result_pos.try_into()?));
+        }
+        self.depth -= 1;
+        if !tail_position {
+            self.clear_all_to_depth()?;
+        }
+        let jump_position = self.chunk.opcodes.len();
+        for code_pos in exit_jumps {
+            self.chunk.opcodes[code_pos] = OpCode::Jump((jump_position - code_pos).try_into()?);
+        }
+        self.depth -= 1;
+        self.clear_all_to_depth()?;
+        self.locals[result_pos] = Local::Temporary;
+        if tail_position {
+            Ok(None)
+        } else {
+            Ok(Some(result_pos))
+        }
     }
 
     fn compile_tail_expression(&mut self, expression: Expression) -> Result<()> {
@@ -225,6 +211,14 @@ impl<const N: usize> Compiler<N> {
                 .push(OpCode::LoadUpValue(i.try_into()?, out_index.try_into()?));
             self.locals[out_index] = Local::Temporary;
             out_index
+        } else if let Some(native_function) = NativeFunction::resolve_symbol(&symbol) {
+            let out_index = self.find_free_register()?;
+            self.chunk.opcodes.push(OpCode::InsertNativeFunction(
+                native_function,
+                out_index.try_into()?,
+            ));
+            self.locals[out_index] = Local::Temporary;
+            out_index
         } else {
             return Err(anyhow!("Couldn't get a symbol"));
         };
@@ -232,7 +226,6 @@ impl<const N: usize> Compiler<N> {
     }
 
     fn find_nonlocal_symbol(&mut self, symbol: &Symbol) -> Option<usize> {
-        println!("FINDING NONLOCAL SYMBOL");
         if let Some(p) = &mut self.previous {
             if let Some(l_pos) = p.find_local_symbol(symbol) {
                 match p.locals.get_mut(l_pos as usize) {
@@ -482,6 +475,9 @@ impl<const N: usize> Compiler<N> {
                 }
                 Local::None => Err(anyhow!(
                     "There should not be none in the location of an expression"
+                )),
+                Local::Reserved => Err(anyhow!(
+                    "There should not be reserved in the location of an expression"
                 )),
             }
         }
