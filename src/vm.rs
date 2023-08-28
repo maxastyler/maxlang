@@ -142,7 +142,7 @@ impl VM {
     }
 
     fn tail_call(&mut self) -> Result<Option<Value>> {
-        println!("{:?}", self);
+        // println!("{:?}", self);
         let last_frame = self.frames.pop().context("No current frame to pop")?;
         match self
             .temporary_storage
@@ -252,6 +252,7 @@ impl VM {
 
     fn call(&mut self, result_slot: usize) -> Result<()> {
         self.increase_pointer(1)?;
+
         match self
             .temporary_storage
             .get(0)
@@ -259,12 +260,12 @@ impl VM {
         {
             Value::NativeFunction(nf) => {
                 self.last_frame_mut()?.registers[result_slot] =
-                    nf.call(&self.temporary_storage[1..])?
+                    nf.call(&self.temporary_storage[1..])?;
+		self.temporary_storage.clear();
             }
             Value::Object(Object::Closure(_)) => self.create_and_push_new_frame(result_slot)?,
             _ => return Err(anyhow!("Tried to call something that's not a function")),
         };
-        self.create_and_push_new_frame(result_slot)?;
         Ok(())
     }
 

@@ -58,6 +58,7 @@ impl From<Literal> for Value {
 
 impl Value {
     pub fn int(&self) -> Result<i64> {
+	println!("The integer is {:?}", self);
         match self {
             Value::Integer(i) => Ok(*i),
             _ => Err(anyhow!("Not an integer!")),

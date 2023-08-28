@@ -60,9 +60,39 @@ fn main() {
         vec![2.into(), 3.into()],
     )
     .into();
-    let fn_body: Expression = Expression::Condition();
-    let fib: Expression = vec![("fib", (vec!["self", "n"], fn_body.into())).into()].into();
-    let f = c.compile_expression_as_function(fib).unwrap();
+    let fn_body: Expression = Expression::Condition(
+        vec![(("<".into(), vec!["n".into(), 2.into()]).into(), "n".into())],
+        Box::new(
+            (
+                "+".into(),
+                vec![
+                    (
+                        "fib".into(),
+                        vec![
+                            "fib".into(),
+                            ("-".into(), vec!["n".into(), 2.into()]).into(),
+                        ],
+                    )
+                        .into(),
+                    (
+                        "fib".into(),
+                        vec![
+                            "fib".into(),
+                            ("-".into(), vec!["n".into(), 1.into()]).into(),
+                        ],
+                    )
+                        .into(),
+                ],
+            )
+                .into(),
+        ),
+    );
+    let fib: Expression = ("fib", (vec!["fib", "n"], fn_body.into()).into()).into();
+    let f = c
+        .compile_expression_as_function(
+            vec![fib, ("fib".into(), vec!["fib".into(), 35.into()]).into()].into(),
+        )
+        .unwrap();
     let mut v = vm::VM {
         frames: vec![Frame::new(
             Rc::new(Closure {
@@ -74,7 +104,7 @@ fn main() {
         )],
         ..Default::default()
     };
-    let v = loop {
+    let res = loop {
         match v.step() {
             Ok(Some(v)) => break v,
             Err(e) => panic!("{:?}", e),
@@ -83,4 +113,5 @@ fn main() {
     };
 
     println!("{:?}", v);
+    println!("{:?}", res);
 }
