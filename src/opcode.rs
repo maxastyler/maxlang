@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::native_function::NativeFunction;
 
 #[derive(Debug, Clone)]
-pub enum OpCode<T: Into<usize> + Debug + Clone + TryFrom<usize>> {
+pub enum OpCode<T: Debug + Clone> {
     /// Call the function in register .0,
     /// Putting the result into the register .1
     /// Arguments are given after the call
@@ -11,7 +11,7 @@ pub enum OpCode<T: Into<usize> + Debug + Clone + TryFrom<usize>> {
     /// Create a tail call with the function in the given register
     /// Followed by `CallArgument`s
     TailCall(T),
-    
+
     CallArgument(T),
 
     /// Return the value in the given register
@@ -42,5 +42,5 @@ pub enum OpCode<T: Into<usize> + Debug + Clone + TryFrom<usize>> {
     /// Unconditional crash
     Crash,
     /// Insert this native function into the given register
-    InsertNativeFunction(NativeFunction, T)
+    InsertNativeFunction(NativeFunction, T),
 }
