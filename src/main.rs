@@ -88,11 +88,14 @@ fn main() {
         ),
     );
     let fib: Expression = ("fib", (vec!["fib", "n"], fn_body.into()).into()).into();
+    println!("HIYIYIYIYE");
     let f = c
         .compile_expression_as_function(
             vec![fib, ("fib".into(), vec!["fib".into(), 35.into()]).into()].into(),
         )
         .unwrap();
+    println!("{:?}", c);
+
     let mut v = vm::VM {
         frames: vec![Frame::new(
             Rc::new(Closure {
@@ -104,7 +107,10 @@ fn main() {
         )],
         ..Default::default()
     };
+
+
     let res = loop {
+	println!("{:?}", v);
         match v.step() {
             Ok(Some(v)) => break v,
             Err(e) => panic!("{:?}", e),

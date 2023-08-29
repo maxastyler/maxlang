@@ -4,16 +4,19 @@ use crate::native_function::NativeFunction;
 
 #[derive(Debug, Clone)]
 pub enum OpCode<T: Into<usize> + Debug + Clone + TryFrom<usize>> {
-    /// Call the function in temporary storage, with arguments,
-    /// Putting the result into the given slot
-    Call(T),
-    /// Save the value in the given position
-    /// to the VM's temporary storage
-    Save(T),
+    /// Call the function in register .0,
+    /// Putting the result into the register .1
+    /// Arguments are given after the call
+    Call(T, T),
+    /// Create a tail call with the function in the given register
+    /// Followed by `CallArgument`s
+    TailCall(T),
+    
+    CallArgument(T),
+
     /// Return the value in the given register
     Return(T),
-    /// Create a tail call
-    TailCall,
+
     /// Unconditionally jump to the given offset
     Jump(T),
     /// Check the boolean .0, if false, jump to the given offset, otherwise continue

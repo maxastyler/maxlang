@@ -64,7 +64,6 @@ impl Frame {
 #[derive(Default)]
 pub struct VM {
     pub frames: Vec<Frame>,
-    pub temporary_storage: Vec<Value>,
     pub open_upvalues: Vec<Rc<RefCell<UpValue>>>,
 }
 
@@ -74,10 +73,7 @@ impl Debug for VM {
         for fr in self.frames.iter() {
             f.write_str(&format!("{:?}\n", fr))?;
         }
-        f.write_str(&format!(
-            "],\ntemporary_storage: {:?},\nopen_upvalues: {:?}\n}}",
-            self.temporary_storage, self.open_upvalues
-        ))
+        f.write_str(&format!("],\nopen_upvalues: {:?}\n}}", self.open_upvalues))
     }
 }
 
@@ -86,8 +82,7 @@ impl VM {
         let oc = self.last_frame()?.opcode()?;
         println!("OC: {:?}", oc);
         match oc {
-            OpCode::Call(i) => self.call(i.into()).map(|_| None),
-            OpCode::Save(i) => self.save(i.into()).map(|_| None),
+            OpCode::Call(r, i) => self.call(r.into(), i.into()).map(|_| None),
             OpCode::Return(i) => self.vm_return(i.into()),
             OpCode::CloseUpValue(i) => self.close_upvalue(i.into()).map(|_| None),
             OpCode::CopyValue(from, target) => {
@@ -100,13 +95,16 @@ impl VM {
                 .load_upvalue(uv_slot.into(), target.into())
                 .map(|_| None),
             OpCode::CloseValue(i) => self.close_value(i.into()).map(|_| None),
-            OpCode::TailCall => self.tail_call(),
+            OpCode::TailCall(r) => self.tail_call(r.into()),
             OpCode::CreateClosure(function_index, return_register) => self
                 .create_closure(function_index.into(), return_register.into())
                 .map(|_| None),
             OpCode::CaptureUpValueFromLocal(_) | OpCode::CaptureUpValueFromNonLocal(_) => Err(
                 anyhow!("Bytecode incorrect. Tried to capture upvalue without creating a closure"),
             ),
+            OpCode::CallArgument(_) => Err(anyhow!(
+                "Bytecode incorrect. Tried to have a call argument without a previous call"
+            )),
             OpCode::Jump(offset) => self.jump(offset.into()).map(|_| None),
             OpCode::JumpToOffsetIfFalse(boolean_register, offset) => self
                 .jump_to_offset_if_false(boolean_register.into(), offset.into())
@@ -141,41 +139,49 @@ impl VM {
         }
     }
 
-    fn tail_call(&mut self) -> Result<Option<Value>> {
-        // println!("{:?}", self);
-        let last_frame = self.frames.pop().context("No current frame to pop")?;
-        match self
-            .temporary_storage
-            .get(0)
-            .context("Could not get function from temporary storage")?
-        {
+    fn tail_call(&mut self, function_register: usize) -> Result<Option<Value>> {
+        match self.last_frame()?.registers[function_register].clone() {
             Value::NativeFunction(native_function) => {
-                let value = native_function.call(&self.temporary_storage[1..])?;
+                let value = self.call_native_function(native_function)?;
 
-                return if self.frames.is_empty() {
+                return if self.frames.len() <= 1 {
                     Ok(Some(value))
                 } else {
-                    self.last_frame_mut()?.registers[last_frame.return_position] = value;
+                    let return_position = self.last_frame()?.return_position;
+                    self.last_frame_mut()?.registers[return_position] = value;
                     Ok(None)
                 };
             }
             Value::Object(Object::Closure(closure)) => {
                 let mut new_frame = Frame::new(
                     closure.clone(),
-                    last_frame.depth + 1,
-                    last_frame.return_position,
+                    self.last_frame()?.depth + 1,
+                    self.last_frame()?.return_position,
                 );
-                new_frame.registers.splice(
-                    0..new_frame.function.arity,
-                    self.temporary_storage
-                        .drain(1..(new_frame.function.arity + 1)),
-                );
-                self.frames.push(new_frame);
+                let mut index = 0;
+                self.increase_pointer(1)?;
+                loop {
+                    match self.last_frame()?.opcode()? {
+                        OpCode::CallArgument(argument_register) => {
+                            let value: Value =
+                                self.last_frame()?.registers[argument_register as usize].clone();
+                            new_frame.registers[index] = value;
+                            self.increase_pointer(1)?;
+                            index += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                if index != new_frame.function.arity {
+                    Err(anyhow!("Called function with wrong number of arguments"))
+                } else {
+                    self.frames.pop();
+                    self.frames.push(new_frame);
+                    Ok(None)
+                }
             }
-            _ => return Err(anyhow!("Not a function")),
+            _ => Err(anyhow!("Not a function")),
         }
-        self.temporary_storage.clear();
-        Ok(None)
     }
 
     fn capture_upvalue_from_local(
@@ -233,46 +239,61 @@ impl VM {
 
     /// Creates a new frame from a closure and arguments in the VM's temporary storage
     /// Pushes the new frame onto the current stack of frames
-    fn create_and_push_new_frame(&mut self, result_slot: usize) -> Result<()> {
-        let closure = self
-            .temporary_storage
-            .get(0)
-            .context("Could not get closure from temporary storage")?
-            .closure()?;
+    fn create_and_push_new_frame(
+        &mut self,
+        closure: Rc<Closure>,
+        result_slot: usize,
+    ) -> Result<()> {
         let mut new_frame = Frame::new(closure, self.last_frame()?.depth + 1, result_slot);
-        new_frame.registers.splice(
-            0..new_frame.function.arity,
-            self.temporary_storage
-                .drain(1..(new_frame.function.arity + 1)),
-        );
-        self.frames.push(new_frame);
-        self.temporary_storage.clear();
-        Ok(())
+        let mut index = 0;
+        loop {
+            match self.last_frame()?.opcode()? {
+                OpCode::CallArgument(argument_register) => {
+                    let value: Value =
+                        self.last_frame()?.registers[argument_register as usize].clone();
+                    new_frame.registers[index] = value;
+                    self.increase_pointer(1);
+                    index += 1;
+                }
+                _ => break,
+            }
+        }
+        if index != new_frame.function.arity {
+            Err(anyhow!("Called function with wrong number of arguments"))
+        } else {
+            self.frames.push(new_frame);
+            Ok(())
+        }
     }
 
-    fn call(&mut self, result_slot: usize) -> Result<()> {
+    fn call_native_function(&mut self, function: NativeFunction) -> Result<Value> {
         self.increase_pointer(1)?;
-
-        match self
-            .temporary_storage
-            .get(0)
-            .context("Could not get closure from temporary storage")?
-        {
-            Value::NativeFunction(nf) => {
-                self.last_frame_mut()?.registers[result_slot] =
-                    nf.call(&self.temporary_storage[1..])?;
-		self.temporary_storage.clear();
+        let mut arguments: Vec<Value> = vec![];
+        loop {
+            match self.last_frame()?.opcode()? {
+                OpCode::CallArgument(argument_register) => {
+                    let value: Value =
+                        self.last_frame()?.registers[argument_register as usize].clone();
+                    arguments.push(value);
+                    self.increase_pointer(1);
+                }
+                _ => break,
             }
-            Value::Object(Object::Closure(_)) => self.create_and_push_new_frame(result_slot)?,
+        }
+        function.call(&arguments)
+    }
+
+    fn call(&mut self, function_register: usize, result_slot: usize) -> Result<()> {
+        match self.last_frame()?.registers[function_register].clone() {
+            Value::NativeFunction(nf) => {
+                let value = self.call_native_function(nf)?;
+                self.last_frame_mut()?.registers[result_slot] = value;
+            }
+            Value::Object(Object::Closure(closure)) => {
+                self.create_and_push_new_frame(closure, result_slot)?
+            }
             _ => return Err(anyhow!("Tried to call something that's not a function")),
         };
-        Ok(())
-    }
-
-    fn save(&mut self, position: usize) -> Result<()> {
-        let v = self.last_frame()?.registers[position].clone();
-        self.temporary_storage.push(v);
-        self.increase_pointer(1)?;
         Ok(())
     }
 
