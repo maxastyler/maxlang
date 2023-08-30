@@ -5,7 +5,7 @@ use crate::{expression::Literal, native_function::NativeFunction, opcode::OpCode
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
-    pub opcodes: Vec<OpCode<u8>>,
+    pub opcodes: Vec<OpCode<u8, u8>>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<Function>>,
 }

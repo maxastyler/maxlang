@@ -51,7 +51,7 @@ impl Frame {
             upvalues: closure.upvalues.clone(),
         }
     }
-    pub fn opcode(&self) -> Result<OpCode<u8>> {
+    pub fn opcode(&self) -> Result<OpCode<u8, u8>> {
         self.function
             .chunk
             .opcodes

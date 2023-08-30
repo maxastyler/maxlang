@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::{ops::Index, rc::Rc};
 
 use crate::{
-    expression::{Literal, Symbol},
+    expression::{Expression, Literal, Symbol},
     opcode::OpCode,
     value::{Function, Value},
 };
@@ -36,7 +36,7 @@ pub struct CompilerFrame {
     pub locals: Vec<Local>,
     pub captures: Vec<FrameIndex>,
     pub depth: usize,
-    pub opcodes: Vec<OpCode<FrameIndex>>,
+    pub opcodes: Vec<OpCode<usize, FrameIndex>>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<Function>>,
 }
@@ -105,13 +105,30 @@ impl CompilerFrame {
             })
     }
 
+    /// Remove all symbols from the current scope (depth == self.depth)
+    fn clear_scope_of_symbol(&mut self, symbol: &Symbol) {
+        self.locals
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, l)| {
+                matches!(l,Local::Named(Named { name, depth }) if name == symbol
+				      && *depth == self.depth)
+            })
+            .for_each(|(i, l)| {
+                *l = Local::None;
+                self.opcodes
+                    .push(OpCode::CloseValue(FrameIndex::LocalIndex(i)))
+            });
+    }
+
     fn add_literal(&mut self, literal: &Literal) -> Result<FrameIndex> {
         self.constants.push((*literal).into());
         let (i, _) = self
             .reserve_next_free_register()
             .context("Cannot reserve a register")?;
-	let index = FrameIndex::LocalIndex(i);
-	self.opcodes.push(OpCode::LoadConstant(index));
+        let index = FrameIndex::LocalIndex(i);
+        self.opcodes
+            .push(OpCode::LoadConstant(self.constants.len() - 1, index));
         Ok(index)
     }
 }
@@ -133,7 +150,7 @@ impl Compiler {
         self.frame(frame_index)?.find_local(symbol)
     }
 
-    fn push_opcode(&mut self, opcode: OpCode<FrameIndex>) -> Result<()> {
+    fn push_opcode(&mut self, opcode: OpCode<usize, FrameIndex>) -> Result<()> {
         self.last_frame()?.opcodes.push(opcode);
         Ok(())
     }
@@ -163,5 +180,64 @@ impl Compiler {
 
     fn compile_literal(&mut self, literal: &Literal) -> Result<FrameIndex> {
         self.last_frame()?.add_literal(literal)
+    }
+
+    fn compile_assign(
+        &mut self,
+        symbol: &Symbol,
+        expression: &Expression,
+        tail_position: bool,
+    ) -> Result<Option<FrameIndex>> {
+        if tail_position {
+            self.compile_expression(expression, true)
+        } else {
+            self.last_frame()?.clear_scope_of_symbol(symbol);
+            let expression_position = self
+                .compile_expression(expression, false)?
+                .context("Didn't get a return position")?;
+            self.last_frame()?.locals[expression_position] = Local::Named(Named {
+                name: symbol,
+                depth: self.last_frame()?.depth,
+            });
+	    Ok()
+        }
+    }
+
+    fn maybe_return_value(
+        &mut self,
+        expression_result_position: FrameIndex,
+        tail_position: bool,
+    ) -> Result<Option<FrameIndex>> {
+        if tail_position {
+            self.last_frame()?
+                .opcodes
+                .push(OpCode::Return(expression_result_position));
+            Ok(None)
+        } else {
+            Ok(Some(expression_result_position))
+        }
+    }
+
+    fn compile_expression(
+        &mut self,
+        expression: &Expression,
+        tail_position: bool,
+    ) -> Result<Option<FrameIndex>> {
+        match expression {
+            Expression::Condition(_, _) => todo!(),
+            Expression::Call(_, _) => todo!(),
+            Expression::Assign(_, _) => todo!(),
+            Expression::Function(_, _) => todo!(),
+            Expression::Block(_, _) => todo!(),
+            Expression::Function(_, _) => todo!(),
+            Expression::Literal(literal) => {
+                let pos = self.compile_literal(literal)?;
+                self.maybe_return_value(pos, tail_position)
+            }
+            Expression::Symbol(symbol) => {
+                let pos = self.compile_symbol(symbol)?;
+                self.maybe_return_value(pos, tail_position)
+            }
+        }
     }
 }
