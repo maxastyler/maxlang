@@ -1,7 +1,11 @@
 use anyhow::{Context, Result};
-use std::ops::Index;
+use std::{ops::Index, rc::Rc};
 
-use crate::{expression::Symbol, opcode::OpCode};
+use crate::{
+    expression::{Literal, Symbol},
+    opcode::OpCode,
+    value::{Function, Value},
+};
 
 #[derive(PartialEq, Debug)]
 pub struct Named {
@@ -11,8 +15,13 @@ pub struct Named {
 
 #[derive(PartialEq, Debug)]
 pub enum Local {
+    /// A named register, which contains a value which should not be reused
     Named(Named),
+    /// A register which contains a value, which should not be reused
     Reserved,
+    /// A register which contains a value, which can be reused
+    ToClear,
+    /// A register which doesn't contain a value
     None,
 }
 
@@ -28,6 +37,8 @@ pub struct CompilerFrame {
     pub captures: Vec<FrameIndex>,
     pub depth: usize,
     pub opcodes: Vec<OpCode<FrameIndex>>,
+    pub constants: Vec<Value>,
+    pub functions: Vec<Rc<Function>>,
 }
 
 impl CompilerFrame {
@@ -40,10 +51,12 @@ impl CompilerFrame {
             captures: vec![],
             depth: depth + 1,
             opcodes: vec![],
+            constants: vec![],
+            functions: vec![],
         }
     }
 
-    /// Finds the symbol with the same name at the highest depth <= self.depth,
+    /// Finds the symbol with the same name at the greatest depth <= self.depth,
     fn find_local(&self, symbol: &Symbol) -> Option<FrameIndex> {
         self.locals
             .iter()
@@ -91,6 +104,14 @@ impl CompilerFrame {
                 self.locals.last_mut().map(|l| (self.locals.len() - 1, l))
             })
     }
+
+    fn add_literal(&mut self, literal: &Literal) -> Result<FrameIndex> {
+        self.constants.push((*literal).into());
+        let (i, _) = self
+            .reserve_next_free_register()
+            .context("Cannot reserve a register")?;
+        Ok(FrameIndex::LocalIndex(i))
+    }
 }
 
 pub struct Compiler {
@@ -135,9 +156,10 @@ impl Compiler {
 
     /// Compile the given symbol. Reserves one local
     fn compile_symbol(&mut self, symbol: &Symbol) -> Result<FrameIndex> {
-        let (reg_i, reg) = self
-            .last_frame()?
-            .reserve_next_free_register()
-            .context("Could not get a free register")?;
+        self.resolve_symbol(symbol)
+    }
+
+    fn compile_literal(&mut self, literal: &Literal) -> Result<FrameIndex> {
+        self.last_frame()?.add_literal(literal)
     }
 }
