@@ -3,22 +3,22 @@ use std::fmt::Debug;
 use crate::native_function::NativeFunction;
 
 #[derive(Debug, Clone)]
-pub enum OpCode<T: Debug + Clone> {
+pub enum OpCode<Uoo, V> {
     /// Call the function in register .0,
     /// Putting the result into the register .1
     /// Arguments are given after the call
-    Call(T, T),
+    Call(V, V),
     /// Create a tail call with the function in the given register
     /// Followed by `CallArgument`s
-    TailCall(T),
+    TailCall(V),
 
-    CallArgument(T),
+    CallArgument(V),
 
     /// Return the value in the given register
-    Return(T),
+    Return(V),
 
-    /// Unconditionally jump to the given offset
-    Jump(T),
+    /// Unconditionally jump to the given position
+    Jump(Uoo),
     /// Check the boolean .0, if false, jump to the given offset, otherwise continue
     JumpToOffsetIfFalse(T, T),
     /// Close the upvalue in the given position

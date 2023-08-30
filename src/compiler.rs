@@ -110,7 +110,9 @@ impl CompilerFrame {
         let (i, _) = self
             .reserve_next_free_register()
             .context("Cannot reserve a register")?;
-        Ok(FrameIndex::LocalIndex(i))
+	let index = FrameIndex::LocalIndex(i);
+	self.opcodes.push(OpCode::LoadConstant(index));
+        Ok(index)
     }
 }
 
