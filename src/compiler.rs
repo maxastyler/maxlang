@@ -191,15 +191,39 @@ impl Compiler {
         if tail_position {
             self.compile_expression(expression, true)
         } else {
-            self.last_frame()?.clear_scope_of_symbol(symbol);
+            // compile before clearing the scope of the symbol
             let expression_position = self
                 .compile_expression(expression, false)?
                 .context("Didn't get a return position")?;
-            self.last_frame()?.locals[expression_position] = Local::Named(Named {
-                name: symbol,
-                depth: self.last_frame()?.depth,
+
+            let lf = self.last_frame()?;
+            // Clear any appearance of this symbol in the current scope
+            lf.clear_scope_of_symbol(symbol);
+            let new_local = Local::Named(Named {
+                name: *symbol,
+                depth: lf.depth,
             });
-	    Ok()
+            Ok(Some(match expression_position {
+                FrameIndex::LocalIndex(i) => {
+                    // The result of the expression is in a register, just assign
+                    // this to a new name
+                    lf.locals[i] = new_local;
+                    expression_position
+                }
+                FrameIndex::CaptureIndex(i) => {
+                    // The result of the expression was a capture,
+                    // copy the capture to a new local
+                    let (new_position, new_local_ref) = lf
+                        .reserve_next_free_register()
+                        .context("Could not reserve free register")?;
+                    lf.opcodes.push(OpCode::CopyValue(
+                        expression_position,
+                        FrameIndex::LocalIndex(new_position),
+                    ));
+                    *new_local_ref = new_local;
+                    FrameIndex::LocalIndex(new_position)
+                }
+            }))
         }
     }
 
