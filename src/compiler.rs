@@ -115,9 +115,7 @@ impl CompilerFrame {
 				      && *depth == self.depth)
             })
             .for_each(|(i, l)| {
-                *l = Local::None;
-                self.opcodes
-                    .push(OpCode::CloseValue(FrameIndex::LocalIndex(i)))
+                *l = Local::Reserved;
             });
     }
 
@@ -242,6 +240,170 @@ impl Compiler {
         }
     }
 
+    fn clear_unreserved_locals(&mut self) -> Result<()> {
+        let frame = self.last_frame()?;
+        frame.locals.iter_mut().enumerate().for_each(|(i, l)| {
+            if matches!(l, Local::ToClear) {
+                *l = Local::None;
+                frame
+                    .opcodes
+                    .push(OpCode::CloseValue(FrameIndex::LocalIndex(i)))
+            }
+        });
+        Ok(())
+    }
+
+    /// Compile a Vec of expressions, and discard all their results
+    fn compile_and_ignore_expressions(
+        &mut self,
+        expressions: Vec<Expression>,
+    ) -> Result<Vec<usize>> {
+        let frame = self.last_frame()?;
+        let mut delayed_clear = vec![];
+        for expression in expressions {
+            let pos = self
+                .compile_expression(&expression, false)?
+                .context("Got no frame index from a non-tail expression")?;
+            match pos {
+                FrameIndex::LocalIndex(i) => match frame.locals[i] {
+                    Local::Reserved => {
+                        frame.locals[i] = Local::None;
+                        frame
+                            .opcodes
+                            .push(OpCode::CloseValue(FrameIndex::LocalIndex(i)))
+                    }
+                    Local::Named(_) => delayed_clear.push(i),
+                    _ => (),
+                },
+                _ => (),
+            };
+        }
+        Ok(delayed_clear)
+    }
+
+    fn compile_block(
+        &mut self,
+        ignored: Vec<Expression>,
+        result: &Expression,
+        tail_position: bool,
+    ) -> Result<Option<FrameIndex>> {
+        let frame = self.last_frame()?;
+        frame.depth += 1;
+        let delayed_clear = self.compile_and_ignore_expressions(ignored)?;
+        let res = self.compile_expression(result, tail_position);
+        frame.depth -= 1;
+        delayed_clear.iter().for_each(|&i| {
+            frame.locals[i] = Local::None;
+            frame
+                .opcodes
+                .push(OpCode::CloseValue(FrameIndex::LocalIndex(i)));
+        });
+        res
+    }
+    fn clear_reserved_indices(&mut self, indices: Vec<FrameIndex>) -> Result<()> {
+        for l in indices {
+            match l {
+                FrameIndex::LocalIndex(i) => {
+                    let frame = self.last_frame()?;
+                    if matches!(frame.locals[i], Local::Reserved) {
+                        frame.locals[i] = Local::None;
+                        frame
+                            .opcodes
+                            .push(OpCode::CloseValue(FrameIndex::LocalIndex(i)))
+                    }
+                }
+                _ => (),
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_call(
+        &mut self,
+        function: &Expression,
+        arguments: Vec<Expression>,
+        tail_position: bool,
+    ) -> Result<Option<FrameIndex>> {
+        let function_index = self.compile_expression(function, false)?.unwrap();
+        let mut arg_locs = vec![function_index];
+        for arg in arguments {
+            arg_locs.push(self.compile_expression(&arg, false)?.unwrap());
+        }
+        if tail_position {
+            self.push_opcode(OpCode::TailCall(function_index))?;
+            for l in arg_locs {
+                self.push_opcode(OpCode::CallArgument(l))?;
+            }
+            Ok(None)
+        } else {
+            let (result_index, _) = self
+                .last_frame()?
+                .reserve_next_free_register()
+                .context("Could not get a free register")?;
+            self.push_opcode(OpCode::Call(
+                function_index,
+                FrameIndex::LocalIndex(result_index),
+            ))?;
+            for l in arg_locs {
+                self.push_opcode(OpCode::CallArgument(l))?;
+            }
+            self.clear_reserved_indices(arg_locs);
+            Ok(Some(FrameIndex::LocalIndex(result_index)))
+        }
+    }
+
+    fn compile_function(&mut self, args: Vec<Symbol>, body: &Expression) -> Result<FrameIndex> {
+        self.frames
+            .push(CompilerFrame::new(args, self.last_frame()?.depth + 1));
+        self.last_frame()?.depth += 1;
+        self.compile_expression(body, true)?;
+        let new_frame = self.frames.pop().context("Could not get a last frame")?;
+        let frame = self.last_frame()?;
+        frame.functions.push(Rc::new(Function {
+            opcodes: new_frame.opcodes,
+            functions: new_frame.functions,
+            constants: new_frame.constants,
+            arity: args.len(),
+            registers: new_frame.locals.len() + new_frame.captures.len(),
+        }));
+        let function_index = frame.functions.len() - 1;
+        let (closure_index, _) = frame
+            .reserve_next_free_register()
+            .context("Cannot reserved register")?;
+        frame.opcodes.push(OpCode::CreateClosure(
+            function_index,
+            FrameIndex::LocalIndex(closure_index),
+        ));
+        new_frame
+            .captures
+            .iter()
+            .for_each(|c| frame.opcodes.push(OpCode::CaptureValue(*c)));
+        Ok(FrameIndex::LocalIndex(closure_index))
+    }
+
+    fn compile_condition(
+        &mut self,
+        clauses: Vec<(Expression, Expression)>,
+        otherwise: &Expression,
+        tail_position: bool,
+    ) -> Result<Option<FrameIndex>> {
+        let frame = self.last_frame()?;
+        frame.depth += 1;
+	let mut prev_op_pos;
+	let mut jump_end_pos = vec![];
+        for (clause, result) in clauses {
+            let clause_pos = self.compile_expression(&clause, false)?;
+            frame.opcodes.push(OpCode::Crash);
+            prev_op_pos = frame.opcodes.len() - 1;
+	    frame.depth += 1;
+	    let result_pos = self.compile_expression(&result, tail_position)?;
+	    frame.opcodes.push(OpCode::Crash);
+	    jump_end_pos.push(frame.opcodes.len()-1);
+	    frame.depth -= 1;
+        }
+        Ok(None)
+    }
+
     fn compile_expression(
         &mut self,
         expression: &Expression,
@@ -249,11 +411,17 @@ impl Compiler {
     ) -> Result<Option<FrameIndex>> {
         match expression {
             Expression::Condition(_, _) => todo!(),
-            Expression::Call(_, _) => todo!(),
-            Expression::Assign(_, _) => todo!(),
-            Expression::Function(_, _) => todo!(),
-            Expression::Block(_, _) => todo!(),
-            Expression::Function(_, _) => todo!(),
+            Expression::Call(function, arguments) => {
+                self.compile_call(&function, *arguments, tail_position)
+            }
+            Expression::Function(args, body) => {
+                let pos = self.compile_function(*args, &body)?;
+                self.maybe_return_value(pos, tail_position)
+            }
+            Expression::Assign(symbol, expression) => {
+                self.compile_assign(symbol, &expression, tail_position)
+            }
+            Expression::Block(ignored, exp) => self.compile_block(*ignored, exp, tail_position),
             Expression::Literal(literal) => {
                 let pos = self.compile_literal(literal)?;
                 self.maybe_return_value(pos, tail_position)
@@ -263,5 +431,14 @@ impl Compiler {
                 self.maybe_return_value(pos, tail_position)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_something_works() {
+        assert!(2 == 2);
     }
 }

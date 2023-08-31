@@ -1,18 +1,15 @@
 use anyhow::{anyhow, Result};
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{expression::Literal, native_function::NativeFunction, opcode::OpCode};
-
-#[derive(Debug, Clone)]
-pub struct Chunk {
-    pub opcodes: Vec<OpCode<u8, u8>>,
-    pub constants: Vec<Value>,
-    pub functions: Vec<Rc<Function>>,
-}
+use crate::{
+    compiler::FrameIndex, expression::Literal, native_function::NativeFunction, opcode::OpCode,
+};
 
 #[derive(Debug)]
 pub struct Function {
-    pub chunk: Chunk,
+    pub opcodes: Vec<OpCode<usize, FrameIndex>>,
+    pub constants: Vec<Value>,
+    pub functions: Vec<Rc<Function>>,
     pub arity: usize,
     pub registers: usize,
 }
@@ -58,7 +55,7 @@ impl From<Literal> for Value {
 
 impl Value {
     pub fn int(&self) -> Result<i64> {
-	println!("The integer is {:?}", self);
+        println!("The integer is {:?}", self);
         match self {
             Value::Integer(i) => Ok(*i),
             _ => Err(anyhow!("Not an integer!")),

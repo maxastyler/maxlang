@@ -30,11 +30,8 @@ pub enum OpCode<VecIndex, RegisterIndex> {
     /// Create closure. Takes the index of the function in the current chunk,
     /// puts the result in the register .1
     CreateClosure(VecIndex, RegisterIndex),
-    //// Capture upvalues only ever appear after CreateClosure
-    /// Capture an upvalue from a local in the function above
-    CaptureUpValueFromLocal(RegisterIndex),
-    /// Capture an upvalue from the above function's upvalues
-    CaptureUpValueFromNonLocal(RegisterIndex),
+    /// Capture a value from the current function
+    CaptureValue(RegisterIndex),
     /// Unconditional crash
     Crash,
     /// Insert this native function into the given register
