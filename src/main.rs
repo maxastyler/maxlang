@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
 use compiler::Compiler;
-use value::{Chunk, Value};
-use vm::Frame;
 
 use crate::{
     expression::{Expression, Symbol},
@@ -14,7 +12,7 @@ mod expression;
 mod native_function;
 mod opcode;
 mod value;
-mod vm;
+// mod vm;
 
 fn main() {
     // let mut c: Compiler<256> = Compiler::new(None);

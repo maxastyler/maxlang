@@ -1,3 +1,4 @@
+
 * MAXLANG
 
 An expression based register-based bytecode interpreted language
@@ -19,3 +20,6 @@ An expression based register-based bytecode interpreted language
   When compiling an expression, give an optional register to put the result into.
   This register is not managed by the expression - it's managed by whatever called the compilation of it.
   It doesn't need to do anything to this slot. (Use the Local::Reserved struct from outside for this)
+** Thinking about compilation of expressions
+
+Every expression returns a value.

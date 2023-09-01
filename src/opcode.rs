@@ -19,14 +19,14 @@ pub enum OpCode<VecIndex, RegisterIndex> {
 
     /// Unconditionally jump to the given position
     Jump(VecIndex),
-    /// Check the boolean in .0, if false, jump to the given offset, otherwise continue
-    JumpToOffsetIfFalse(RegisterIndex, VecIndex),
+    /// Check the boolean in .0, if false, jump to the given position, otherwise continue
+    JumpToPositionIfFalse(RegisterIndex, VecIndex),
     /// Copy the value from 0 to 1
     CopyValue(RegisterIndex, RegisterIndex),
     /// Load the constant from the constants array at 0 to the position 1
     LoadConstant(VecIndex, RegisterIndex),
     /// Free the value at the given register
-    CloseValue(RegisterIndex),
+    CloseValue(VecIndex),
     /// Create closure. Takes the index of the function in the current chunk,
     /// puts the result in the register .1
     CreateClosure(VecIndex, RegisterIndex),
