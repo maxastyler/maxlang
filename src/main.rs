@@ -7,11 +7,14 @@ use crate::{
     value::{Closure, Function},
 };
 
+
 mod compiler;
 mod expression;
 mod native_function;
 mod opcode;
 mod value;
+mod parser;
+mod vm;
 // mod vm;
 
 fn main() {

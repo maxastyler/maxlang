@@ -3,7 +3,7 @@ use std::{cell::RefCell, fmt::Debug, ops::Deref, rc::Rc};
 use crate::{
     native_function::{self, NativeFunction},
     opcode::OpCode,
-    value::{Chunk, Closure, Function, Object, UpValue, Value},
+    value::{Closure, Function, Object, UpValue, Value},
 };
 
 use anyhow::{anyhow, Context, Result};

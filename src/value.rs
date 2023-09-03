@@ -38,6 +38,7 @@ pub enum Object {
 #[derive(Debug, Clone)]
 pub enum Value {
     Integer(i64),
+    Double(f64),
     Bool(bool),
     Nil,
     NativeFunction(NativeFunction),
@@ -49,6 +50,8 @@ impl From<Literal> for Value {
         match value {
             Literal::Int(i) => Value::Integer(i),
             Literal::Bool(b) => Value::Bool(b),
+            Literal::Double(d) => Value::Double(d),
+            Literal::Nil => Value::Nil,
         }
     }
 }

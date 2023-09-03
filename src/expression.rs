@@ -1,13 +1,15 @@
 #[derive(PartialEq, Clone, Debug, Hash, Eq)]
 pub struct Symbol(pub String);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
+    Double(f64),
+    Nil,
     Bool(bool),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Condition(Vec<(Expression, Expression)>, Box<Expression>),
     Call(Box<Expression>, Vec<Expression>),

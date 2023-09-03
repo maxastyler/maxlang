@@ -5,6 +5,7 @@ use crate::{
     expression::{Expression, Literal, Symbol},
     opcode::OpCode,
     value::{Function, Value},
+    vm::Frame,
 };
 
 #[derive(PartialEq, Debug, Clone)]
@@ -29,6 +30,15 @@ pub enum FrameIndex {
 }
 
 #[derive(Debug)]
+pub struct CompilerFunction {
+    pub opcodes: Vec<OpCode<usize, FrameIndex>>,
+    pub constants: Vec<Value>,
+    pub functions: Vec<Rc<CompilerFunction>>,
+    pub arity: usize,
+    pub registers: usize,
+}
+
+#[derive(Debug)]
 pub struct CompilerFrame {
     pub names: HashMap<(usize, Symbol), FrameIndex>,
     pub locals: Vec<Local>,
@@ -37,7 +47,7 @@ pub struct CompilerFrame {
     pub depth: usize,
     pub opcodes: Vec<OpCode<usize, FrameIndex>>,
     pub constants: Vec<Value>,
-    pub functions: Vec<Rc<Function>>,
+    pub functions: Vec<Rc<CompilerFunction>>,
 }
 
 impl CompilerFrame {
@@ -72,7 +82,7 @@ impl CompilerFrame {
         }
     }
 
-    fn new(arguments: &Vec<Symbol>, depth: usize) -> Self {
+    pub fn new(arguments: &Vec<Symbol>, depth: usize) -> Self {
         CompilerFrame {
             locals: repeat(Local::ToClear).take(arguments.len()).collect(),
             names: HashMap::from_iter(
@@ -156,7 +166,7 @@ impl CompilerFrame {
 }
 
 pub struct Compiler {
-    pub frames: Vec<CompilerFrame>,
+    frames: Vec<CompilerFrame>,
 }
 
 impl Compiler {
@@ -356,7 +366,7 @@ impl Compiler {
         self.compile_expression(None, body, true)?;
         let new_frame = self.frames.pop().unwrap();
         let frame = self.frames.last_mut().unwrap();
-        frame.functions.push(Rc::new(Function {
+        frame.functions.push(Rc::new(CompilerFunction {
             opcodes: new_frame.opcodes,
             functions: new_frame.functions,
             constants: new_frame.constants,
@@ -450,13 +460,34 @@ impl Compiler {
             x => x,
         })
     }
+
+    pub fn new() -> Compiler {
+	Compiler {
+	    frames: vec![CompilerFrame::new(&vec![], 0)]
+	}
+    }
+
+    pub fn get_frame_for_vm(&self) {
+        assert!(self.frames.len() == 1);
+        let f = self.frames[0];
+
+
+    }
 }
 
 #[cfg(test)]
 mod tests {
-
+    use super::Compiler;
+    use crate::{parser::parse_program, compiler::CompilerFrame};
     #[test]
-    fn test_something_works() {
-        assert!(2 == 2);
+    fn test_compiler_is_working() {
+        let (s, e) = parse_program(
+            "fn fib (fib, n) {cond {n `< 2 => n, {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}}",
+        )
+            .unwrap();
+	let mut c = Compiler::new();
+	c.compile_expression(None, &e[0], true);
+        assert_eq!(s, "");
+        assert_eq!(e, vec![]);
     }
 }
