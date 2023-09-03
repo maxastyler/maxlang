@@ -417,7 +417,7 @@ impl Compiler {
         }
     }
 
-    fn compile_expression(
+    pub fn compile_expression(
         &mut self,
         position: Option<LocalIndex>,
         expression: &Expression,
