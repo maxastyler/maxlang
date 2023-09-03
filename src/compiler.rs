@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::{collections::HashMap, iter::repeat, rc::Rc};
 
 use crate::{
     expression::{Expression, Literal, Symbol},
+    native_function::NativeFunction,
     opcode::OpCode,
     value::{Function, Value},
-    vm::Frame,
 };
 
 #[derive(PartialEq, Debug, Clone)]
@@ -35,6 +35,7 @@ pub struct CompilerFunction {
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<CompilerFunction>>,
     pub arity: usize,
+    pub captures: usize,
     pub registers: usize,
 }
 
@@ -47,17 +48,41 @@ pub struct CompilerFrame {
     pub depth: usize,
     pub opcodes: Vec<OpCode<usize, FrameIndex>>,
     pub constants: Vec<Value>,
-    pub functions: Vec<Rc<CompilerFunction>>,
+    pub functions: Vec<Rc<Function>>,
 }
 
 impl CompilerFrame {
+    fn to_function(self, arity: usize) -> Function {
+        Function {
+            opcodes: self
+                .opcodes
+                .iter()
+                .map(|o| {
+                    o.convert(
+                        &mut |v_index| v_index as u16,
+                        &mut |ref_index| match ref_index {
+                            FrameIndex::LocalIndex(LocalIndex(l)) => l + self.captures.len(),
+                            FrameIndex::CaptureIndex(CaptureIndex(c)) => c,
+                        } as u16,
+                    )
+                })
+                .collect(),
+
+            constants: self.constants,
+            functions: self.functions,
+            arity,
+            capture_offset: self.captures.len(),
+            registers: self.locals.len() + self.captures.len(),
+        }
+    }
+
     fn increase_scope(&mut self) {
         self.depth += 1;
     }
 
     fn reduce_scope(&mut self) {
         self.depth -= 1;
-        self.names.retain(|(depth, _), v| *depth <= self.depth);
+        self.names.retain(|(depth, _), _| *depth <= self.depth);
     }
 
     fn assign_name(&mut self, name: &Symbol, register: FrameIndex) {
@@ -165,6 +190,7 @@ impl CompilerFrame {
     }
 }
 
+#[derive(Debug)]
 pub struct Compiler {
     frames: Vec<CompilerFrame>,
 }
@@ -237,11 +263,10 @@ impl Compiler {
         }
     }
 
-    fn resolve_symbol(&mut self, symbol: &Symbol) -> Result<FrameIndex> {
+    fn resolve_symbol(&mut self, symbol: &Symbol) -> Option<FrameIndex> {
         let last_frame_index = self.frames.len() - 1;
         self.find_local_symbol(last_frame_index, symbol)
             .or_else(|| self.find_nonlocal_symbol(last_frame_index, symbol))
-            .context(format!("Could not find symbol {:?}", symbol))
     }
 
     fn compile_literal(
@@ -261,16 +286,27 @@ impl Compiler {
         position: Option<LocalIndex>,
         symbol: &Symbol,
     ) -> Result<FrameIndex> {
-        let i = self.resolve_symbol(symbol)?;
-        match position {
-            Some(p) => match i.clone() {
-                FrameIndex::LocalIndex(l) if l == p => Ok(i),
-                x => {
-                    self.push_opcode(OpCode::CopyValue(x, FrameIndex::LocalIndex(p.clone())));
-                    Ok(FrameIndex::LocalIndex(p))
-                }
-            },
-            None => Ok(i),
+        if let Some(i) = self.resolve_symbol(symbol) {
+            match position {
+                Some(p) => match i.clone() {
+                    FrameIndex::LocalIndex(l) if l == p => Ok(i),
+                    x => {
+                        self.push_opcode(OpCode::CopyValue(x, FrameIndex::LocalIndex(p.clone())))?;
+                        Ok(FrameIndex::LocalIndex(p))
+                    }
+                },
+                None => Ok(i),
+            }
+        } else if let Some(fun) = NativeFunction::resolve_symbol(symbol) {
+            let result_pos =
+                position.unwrap_or_else(|| self.reserve_next_free_register().unwrap().0);
+            self.push_opcode(OpCode::InsertNativeFunction(
+                fun,
+                FrameIndex::LocalIndex(result_pos.clone()),
+            ))?;
+            Ok(FrameIndex::LocalIndex(result_pos))
+        } else {
+            Err(anyhow!("Could not resolve symbol: {:?}", symbol))
         }
     }
 
@@ -283,7 +319,7 @@ impl Compiler {
     ) -> Result<Option<FrameIndex>> {
         match self.compile_expression(position, expression, tail_position)? {
             Some(p) => {
-                self.assign_name(symbol, p.clone());
+                self.assign_name(symbol, p.clone())?;
                 Ok(Some(p))
             }
             None => Ok(None),
@@ -295,7 +331,7 @@ impl Compiler {
         for expression in expressions {
             let index = self.compile_expression(None, expression, false)?.unwrap();
             self.drop_register(index)?;
-            self.clear_unused_locals();
+            self.clear_unused_locals()?;
         }
         Ok(())
     }
@@ -363,24 +399,23 @@ impl Compiler {
             self.frames.last().unwrap().depth + 1,
         ));
         self.increase_scope();
+
         self.compile_expression(None, body, true)?;
+
         let new_frame = self.frames.pop().unwrap();
+        let captures = new_frame.captures.clone();
         let frame = self.frames.last_mut().unwrap();
-        frame.functions.push(Rc::new(CompilerFunction {
-            opcodes: new_frame.opcodes,
-            functions: new_frame.functions,
-            constants: new_frame.constants,
-            arity: args.len(),
-            registers: new_frame.locals.len() + new_frame.captures.len(),
-        }));
+
+        frame
+            .functions
+            .push(Rc::new(new_frame.to_function(args.len())));
         let function_index = frame.functions.len() - 1;
         let closure_index = position.unwrap_or_else(|| frame.reserve_next_free_register().0);
         frame.opcodes.push(OpCode::CreateClosure(
             function_index,
             FrameIndex::LocalIndex(closure_index.clone()),
         ));
-        new_frame
-            .captures
+        captures
             .into_iter()
             .for_each(|c| frame.opcodes.push(OpCode::CaptureValue(c)));
         Ok(FrameIndex::LocalIndex(closure_index))
@@ -462,31 +497,30 @@ impl Compiler {
     }
 
     pub fn new() -> Compiler {
-	Compiler {
-	    frames: vec![CompilerFrame::new(&vec![], 0)]
-	}
+        Compiler {
+            frames: vec![CompilerFrame::new(&vec![], 0)],
+        }
     }
 
-    pub fn get_frame_for_vm(&self) {
-        assert!(self.frames.len() == 1);
-        let f = self.frames[0];
-
-
+    pub fn frame_to_function(&mut self) -> Function {
+        let f = self.frames.pop().unwrap();
+        f.to_function(0)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Compiler;
-    use crate::{parser::parse_program, compiler::CompilerFrame};
+    use crate::parser::parse_program;
     #[test]
     fn test_compiler_is_working() {
         let (s, e) = parse_program(
             "fn fib (fib, n) {cond {n `< 2 => n, {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}}",
         )
-            .unwrap();
-	let mut c = Compiler::new();
-	c.compile_expression(None, &e[0], true);
+        .unwrap();
+        let mut c = Compiler::new();
+        c.compile_expression(None, &e[0], true).unwrap();
+        assert_eq!(c.frame_to_function().opcodes, vec![]);
         assert_eq!(s, "");
         assert_eq!(e, vec![]);
     }

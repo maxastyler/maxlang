@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crate::native_function::NativeFunction;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OpCode<VecIndex, RegisterIndex> {
     /// Call the function in register .0,
     /// Putting the result into the register .1
@@ -36,4 +36,40 @@ pub enum OpCode<VecIndex, RegisterIndex> {
     Crash,
     /// Insert this native function into the given register
     InsertNativeFunction(NativeFunction, RegisterIndex),
+}
+
+impl<A, B> OpCode<A, B>
+where
+    A: Clone,
+    B: Clone,
+{
+    pub fn convert<C, D>(
+        &self,
+        a_to_c: &mut impl FnMut(A) -> C,
+        b_to_d: &mut impl FnMut(B) -> D,
+    ) -> OpCode<C, D> {
+        match self {
+            OpCode::Call(a, b) => OpCode::Call(b_to_d(a.clone()), b_to_d(b.clone())),
+            OpCode::TailCall(a) => OpCode::TailCall(b_to_d(a.clone())),
+            OpCode::CallArgument(a) => OpCode::CallArgument(b_to_d(a.clone())),
+            OpCode::Return(a) => OpCode::Return(b_to_d(a.clone())),
+            OpCode::Jump(a) => OpCode::Jump(a_to_c(a.clone())),
+            OpCode::JumpToPositionIfFalse(a, b) => {
+                OpCode::JumpToPositionIfFalse(b_to_d(a.clone()), a_to_c(b.clone()))
+            }
+            OpCode::CopyValue(a, b) => OpCode::CopyValue(b_to_d(a.clone()), b_to_d(b.clone())),
+            OpCode::LoadConstant(a, b) => {
+                OpCode::LoadConstant(a_to_c(a.clone()), b_to_d(b.clone()))
+            }
+            OpCode::CloseValue(a) => OpCode::CloseValue(a_to_c(a.clone())),
+            OpCode::CreateClosure(a, b) => {
+                OpCode::CreateClosure(a_to_c(a.clone()), b_to_d(b.clone()))
+            }
+            OpCode::CaptureValue(a) => OpCode::CaptureValue(b_to_d(a.clone())),
+            OpCode::Crash => OpCode::Crash,
+            OpCode::InsertNativeFunction(a, b) => {
+                OpCode::InsertNativeFunction(a.clone(), b_to_d(b.clone()))
+            }
+        }
+    }
 }

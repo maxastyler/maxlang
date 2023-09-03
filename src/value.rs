@@ -7,32 +7,23 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Function {
-    pub opcodes: Vec<OpCode<usize, FrameIndex>>,
+    pub opcodes: Vec<OpCode<u16, u16>>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<Function>>,
     pub arity: usize,
+    pub capture_offset: usize,
     pub registers: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub function: Rc<Function>,
-    pub upvalues: Vec<Rc<RefCell<UpValue>>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum UpValue {
-    Open {
-        frame_number: usize,
-        register: usize,
-    },
-    Closed(Value),
+    pub captures: Vec<Value>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Object {
     Closure(Rc<Closure>),
-    UpValue(Rc<RefCell<UpValue>>),
 }
 
 #[derive(Debug, Clone)]

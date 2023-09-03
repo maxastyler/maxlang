@@ -1,7 +1,7 @@
 use crate::{expression::Symbol, value::Value};
 use anyhow::Result;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NativeFunction {
     LessThan,
     Sum,
