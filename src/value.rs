@@ -7,7 +7,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Function {
-    pub opcodes: Vec<OpCode<u16, u16>>,
+    pub opcodes: Vec<OpCode<u8, u8>>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<Function>>,
     pub arity: usize,

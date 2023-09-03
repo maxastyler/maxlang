@@ -59,11 +59,11 @@ impl CompilerFrame {
                 .iter()
                 .map(|o| {
                     o.convert(
-                        &mut |v_index| v_index as u16,
+                        &mut |v_index| v_index as u8,
                         &mut |ref_index| match ref_index {
                             FrameIndex::LocalIndex(LocalIndex(l)) => l + self.captures.len(),
                             FrameIndex::CaptureIndex(CaptureIndex(c)) => c,
-                        } as u16,
+                        } as u8,
                     )
                 })
                 .collect(),

@@ -4,9 +4,9 @@
 An expression based register-based bytecode interpreted language
 ** Things to do
 - [ ] Add in structs
-- [ ] Modify tail calls to recursive functions use the same stack frame?? (maybe not reasonable)
+- [X] Modify tail calls to recursive functions use the same stack frame?? (maybe not reasonable)
 - [ ] Add in a trait system (similar to rust/elixir behaviours)
-- [ ] Add in native function calls (sum and stuff)
+- [X] Add in native function calls (sum and stuff)
 - [ ] Add a module system
   Not totally sure how to do it yet. Have static modules and computed modules.
   A static module is like a struct - all things have their positions at compile time.
@@ -16,10 +16,11 @@ An expression based register-based bytecode interpreted language
   Don't have explicit await/async, just colour functions. Async functions can only be
   run inside other async functions or launch {} block.
   Normal functions can be run anywhere.
-- [ ] Update expressions so that they can be given a register to put their result into
+- [X] Update expressions so that they can be given a register to put their result into
   When compiling an expression, give an optional register to put the result into.
   This register is not managed by the expression - it's managed by whatever called the compilation of it.
   It doesn't need to do anything to this slot. (Use the Local::Reserved struct from outside for this)
-** Thinking about compilation of expressions
+- [ ] Make all frames share the same underlying buffer, each one should have an index
 
-Every expression returns a value.
+
+

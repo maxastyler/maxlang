@@ -20,7 +20,7 @@ mod vm;
 
 fn main() {
     let (s, e) = parse_program(
-        "{fn fib (fib, n) {cond {n `< 2 => n, {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}}; fib fib 34}",
+        include_str!("./fibby.maxlang"),
     )
     .unwrap();
     let mut c = Compiler::new();
