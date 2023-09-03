@@ -48,8 +48,15 @@ impl From<Literal> for Value {
 }
 
 impl Value {
+    pub fn double(&self) -> Result<f64> {
+
+        match self {
+            Value::Double(i) => Ok(*i),
+            _ => Err(anyhow!("Not a double!")),
+        }
+    }
     pub fn int(&self) -> Result<i64> {
-        println!("The integer is {:?}", self);
+
         match self {
             Value::Integer(i) => Ok(*i),
             _ => Err(anyhow!("Not an integer!")),

@@ -28,13 +28,13 @@ impl NativeFunction {
 }
 
 fn less_than(a: &Value, b: &Value) -> Result<Value> {
-    Ok(Value::Bool(a.int()? < b.int()?))
+    Ok(Value::Bool(a.double()? < b.double()?))
 }
 
 fn sum(a: &Value, b: &Value) -> Result<Value> {
-    Ok(Value::Integer(a.int()? + b.int()?))
+    Ok(Value::Double(a.double()? + b.double()?))
 }
 
 fn difference(a: &Value, b: &Value) -> Result<Value> {
-    Ok(Value::Integer(a.int()? - b.int()?))
+    Ok(Value::Double(a.double()? - b.double()?))
 }

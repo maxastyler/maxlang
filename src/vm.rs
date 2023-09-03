@@ -43,7 +43,6 @@ impl VM {
             .last_frame()?
             .opcode()
             .context(format!("Could not get value for opcode"))?;
-        println!("OC: {:?}", oc);
         match oc {
             OpCode::Call(r, i) => self.call(r.into(), i.into()).map(|_| None),
             OpCode::Return(i) => self.vm_return(i.into()),
@@ -112,6 +111,7 @@ impl VM {
                     Ok(Some(value))
                 } else {
                     let return_position = self.last_frame()?.return_position;
+                    self.frames.pop().unwrap();
                     self.last_frame_mut()?.registers[return_position] = value;
                     Ok(None)
                 };
@@ -124,7 +124,7 @@ impl VM {
                 )?;
                 Ok(None)
             }
-            _ => Err(anyhow!("Not a function")),
+            x => Err(anyhow!("Not a function: {:?}", x)),
         }
     }
 
@@ -211,7 +211,12 @@ impl VM {
             Value::Object(Object::Closure(closure)) => {
                 self.create_and_push_new_frame(closure, result_slot, false)?
             }
-            _ => return Err(anyhow!("Tried to call something that's not a function")),
+            x => {
+                return Err(anyhow!(
+                    "Tried to call something that's not a function: {:?}",
+                    x
+                ))
+            }
         };
         Ok(())
     }

@@ -39,13 +39,16 @@ impl Debug for Frame {
 
 impl Frame {
     pub fn new(closure: Rc<Closure>, depth: usize, return_position: usize) -> Frame {
-        Frame {
+        let mut f = Frame {
             depth,
             pointer: 0,
             registers: vec![Value::Nil; closure.function.registers],
             function: closure.function.clone(),
             return_position,
-        }
+        };
+        f.registers
+            .splice(0..closure.function.capture_offset, closure.captures.clone());
+        f
     }
 
     pub fn opcode(&self) -> Option<OpCode<u16, u16>> {

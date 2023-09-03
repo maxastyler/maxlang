@@ -20,27 +20,25 @@ mod vm;
 
 fn main() {
     let (s, e) = parse_program(
-        "{let x {fn fib (fib, n) {cond {n `< 2 => n, {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}}}; x 2}",
+        "{fn fib (fib, n) {cond {n `< 2 => n, {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}}; fib fib 34}",
     )
     .unwrap();
     let mut c = Compiler::new();
     c.compile_expression(None, &e[0], true).unwrap();
     let f = c.frame_to_function();
-    println!("{:?}", f);
 
     let mut vm = VM::from_function(f);
-    println!("{:?}", vm);
-    let mut x = 0;
     loop {
-        match vm.step(){
+        match vm.step() {
             Ok(Some(v)) => {
                 println!("GOT A VALUE: {:?}", v);
                 break;
             }
-	    Err(s) => {println!("{:?}", s); break}
+            Err(s) => {
+                println!("{:?}", s);
+                break;
+            }
             _ => (),
         }
-	if x > 100 {break}
-	x += 1;
     }
 }
