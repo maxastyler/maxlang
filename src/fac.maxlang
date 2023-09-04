@@ -8,5 +8,5 @@ fn fac_inner(fac, n, acc) {
 fn fac (n) {
    fac_inner fac_inner n 1
 };
-fac 100000
+fac 1000
 }
