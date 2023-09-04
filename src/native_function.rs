@@ -6,6 +6,7 @@ pub enum NativeFunction {
     LessThan,
     Sum,
     Difference,
+    Multiply,
 }
 
 impl NativeFunction {
@@ -14,6 +15,7 @@ impl NativeFunction {
             "<" => Some(NativeFunction::LessThan),
             "+" => Some(NativeFunction::Sum),
             "-" => Some(NativeFunction::Difference),
+            "*" => Some(NativeFunction::Multiply),
             _ => None,
         }
     }
@@ -23,6 +25,7 @@ impl NativeFunction {
             NativeFunction::LessThan => less_than(&arguments[0], &arguments[1]),
             NativeFunction::Sum => sum(&arguments[0], &arguments[1]),
             NativeFunction::Difference => difference(&arguments[0], &arguments[1]),
+            NativeFunction::Multiply => multiply(&arguments[0], &arguments[1]),
         }
     }
 }
@@ -37,4 +40,8 @@ fn sum(a: &Value, b: &Value) -> Result<Value> {
 
 fn difference(a: &Value, b: &Value) -> Result<Value> {
     Ok(Value::Double(a.double()? - b.double()?))
+}
+
+fn multiply(a: &Value, b: &Value) -> Result<Value> {
+    Ok(Value::Double(a.double()? * b.double()?))
 }

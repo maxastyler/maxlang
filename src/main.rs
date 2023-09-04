@@ -20,7 +20,7 @@ mod vm;
 
 fn main() {
     let (s, e) = parse_program(
-        include_str!("./other.maxlang"),
+        include_str!("./fac.maxlang"),
     )
     .unwrap();
     let mut c = Compiler::new();
