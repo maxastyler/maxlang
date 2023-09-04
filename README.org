@@ -20,7 +20,7 @@ An expression based register-based bytecode interpreted language
   When compiling an expression, give an optional register to put the result into.
   This register is not managed by the expression - it's managed by whatever called the compilation of it.
   It doesn't need to do anything to this slot. (Use the Local::Reserved struct from outside for this)
-- [ ] Make all frames share the same underlying buffer, each one should have an index
+- [X] Make all frames share the same underlying buffer, each one should have an index
 
 
 
