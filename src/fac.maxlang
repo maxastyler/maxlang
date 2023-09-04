@@ -1,0 +1,12 @@
+{
+fn fac_inner(fac, n, acc) {
+   cond {
+   	n `< 2 => acc,
+	fac fac {n `- 1} {n `* acc}
+   }
+};
+fn fac (n) {
+   fac_inner fac_inner n 1
+};
+fac 1000
+}
