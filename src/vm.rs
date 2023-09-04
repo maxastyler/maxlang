@@ -26,9 +26,9 @@ pub struct Storage {
 impl Storage {
     /// ensure that the storage has slots filled up to the given length, increasing capacity if not
     fn ensure_filled(&mut self, length: usize) {
-        if self.register_fill_point < length {
+        if self.register_storage.len() < length {
             self.register_storage
-                .extend(repeat(Value::Uninit).take(length - self.register_fill_point))
+                .extend(repeat(Value::Uninit).take(length - self.register_storage.len()))
         }
     }
     fn splice<R, I>(&mut self, range: R, replace_with: I)
@@ -150,7 +150,7 @@ impl VM {
         boolean_register: usize,
         position: usize,
     ) -> Result<()> {
-        match self.value_in_last_frame(position) {
+        match self.value_in_last_frame(boolean_register) {
             Value::Bool(b) => {
                 if *b {
                     {

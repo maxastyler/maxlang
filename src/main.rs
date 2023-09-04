@@ -20,7 +20,7 @@ mod vm;
 
 fn main() {
     let (s, e) = parse_program(
-        include_str!("./fibby.maxlang"),
+        include_str!("./other.maxlang"),
     )
     .unwrap();
     let mut c = Compiler::new();

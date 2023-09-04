@@ -24,20 +24,7 @@ impl<'a> Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
             "Frame (return_pos: {:?}, pointer: {:?}, depth: {:?}){{\nfunction: {:?}}}",
-            self.return_position,
-            self.pointer,
-            // self.registers
-            //     .iter()
-            //     .enumerate()
-            //     .filter_map(|(i, x)| if matches!(x, Value::Nil) {
-            //         None
-            //     } else {
-            //         Some(format!("({:?}: {:?})", i, x))
-            //     })
-            //     .collect::<Vec<_>>()
-            //     .join(" ||| "),
-            self.register_offset,
-            self.function
+            self.return_position, self.pointer, self.register_offset, self.function
         ))
     }
 }
