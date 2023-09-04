@@ -1,4 +1,10 @@
-use std::{cell::RefCell, fmt::Debug, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    fmt::Debug,
+    iter::repeat,
+    ops::{Deref, RangeBounds},
+    rc::Rc,
+};
 
 use crate::{
     frame::Frame,
@@ -9,14 +15,28 @@ use crate::{
 
 use anyhow::{anyhow, Context, Result};
 
+#[derive(Default)]
 pub struct Storage {
     register_storage: Vec<Value>,
     temporary_storage: Vec<Value>,
+    /// The point where the register is filled up to
+    register_fill_point: usize,
 }
 
 impl Storage {
-    fn x(&mut self) {
-        self.register_storage
+    /// ensure that the storage has slots filled up to the given length, increasing capacity if not
+    fn ensure_filled(&mut self, length: usize) {
+        if self.register_fill_point < length {
+            self.register_storage
+                .extend(repeat(Value::Uninit).take(length - self.register_fill_point))
+        }
+    }
+    fn splice<R, I>(&mut self, range: R, replace_with: I)
+    where
+        R: RangeBounds<usize>,
+        I: IntoIterator<Item = Value>,
+    {
+        self.register_storage.splice(range, replace_with);
     }
 }
 
@@ -37,17 +57,35 @@ impl Debug for VM {
 }
 
 impl VM {
-    pub fn from_function(f: Function) -> Self {
-        Self {
-            frames: vec![Frame::new(
-                Rc::new(Closure {
-                    function: Rc::new(f),
-                    captures: vec![],
-                }),
-                0,
-                0,
-            )],
+    pub fn create_new_frame(
+        &mut self,
+        closure: Rc<Closure>,
+        starting_register: usize,
+        return_position: usize,
+    ) -> Frame {
+        self.storage
+            .ensure_filled(starting_register + closure.function.registers);
+        for (i, c) in closure.captures.iter().enumerate() {
+            self.storage.register_storage[starting_register + i] = c.clone();
         }
+
+        Frame {
+            pointer: 0,
+            register_offset: starting_register,
+            function: closure.function.clone(),
+            return_position,
+        }
+    }
+
+    pub fn from_bare_function(f: Function) -> Self {
+        let closure = Rc::new(Closure {
+            function: Rc::new(f),
+            captures: vec![],
+        });
+        let mut vm = VM::default();
+        let frame = vm.create_new_frame(closure, 0, 0);
+        vm.frames.push(frame);
+        vm
     }
 
     pub fn step(&mut self) -> Result<Option<Value>> {
@@ -90,8 +128,14 @@ impl VM {
         }
     }
 
+    /// Get a mutable reference to a value in the last frame's registers
+    fn value_in_last_frame(&mut self, position: usize) -> &mut Value {
+        let pos = self.last_frame_mut().unwrap().register_offset + position;
+        self.storage.register_storage.get_mut(pos).unwrap()
+    }
+
     fn insert_native_function(&mut self, native_fn: NativeFunction, position: usize) -> Result<()> {
-        self.last_frame_mut()?.registers[position] = Value::NativeFunction(native_fn);
+        *self.value_in_last_frame(position) = Value::NativeFunction(native_fn);
         self.increase_pointer(1);
         Ok(())
     }
@@ -106,9 +150,9 @@ impl VM {
         boolean_register: usize,
         position: usize,
     ) -> Result<()> {
-        match self.last_frame()?.registers[boolean_register] {
+        match self.value_in_last_frame(position) {
             Value::Bool(b) => {
-                if b {
+                if *b {
                     {
                         self.increase_pointer(1);
                         Ok(())
@@ -122,7 +166,7 @@ impl VM {
     }
 
     fn tail_call(&mut self, function_register: usize) -> Result<Option<Value>> {
-        match self.last_frame()?.registers[function_register].clone() {
+        match self.value_in_last_frame(function_register).clone() {
             Value::NativeFunction(native_function) => {
                 let value = self.call_native_function(native_function)?;
 
@@ -131,7 +175,7 @@ impl VM {
                 } else {
                     let return_position = self.last_frame()?.return_position;
                     self.frames.pop().unwrap();
-                    self.last_frame_mut()?.registers[return_position] = value;
+                    *self.value_in_last_frame(return_position) = value;
                     Ok(None)
                 };
             }
@@ -158,14 +202,43 @@ impl VM {
             match self.last_frame()?.opcode() {
                 Some(OpCode::CaptureValue(i)) => closure
                     .captures
-                    .push(self.last_frame()?.registers[i as usize].clone()),
+                    .push(self.value_in_last_frame(i as usize).clone()),
                 _ => break,
             }
             self.increase_pointer(1);
         }
-        self.last_frame_mut()?.registers[result_index] =
-            Value::Object(Object::Closure(Rc::new(closure)));
+        *self.value_in_last_frame(result_index) = Value::Object(Object::Closure(Rc::new(closure)));
         Ok(())
+    }
+
+    fn transform_last_frame_for_tail_call(&mut self, closure: Rc<Closure>) {
+        loop {
+            match self.last_frame().unwrap().opcode() {
+                Some(OpCode::CallArgument(argument_register)) => {
+                    let value: Value = self.value_in_last_frame(argument_register as usize).clone();
+                    self.storage.temporary_storage.push(value);
+                    self.increase_pointer(1);
+                }
+                _ => break,
+            }
+        }
+        debug_assert!(self.storage.temporary_storage.len() == closure.function.arity);
+        let frame = self.frames.last_mut().unwrap();
+        let storage = &mut self.storage;
+        storage.ensure_filled(frame.register_offset + closure.function.registers);
+        for (i, c) in closure.captures.iter().enumerate() {
+            storage.register_storage[frame.register_offset + i] = c.clone();
+        }
+
+        for (i, t) in storage.temporary_storage.iter().enumerate() {
+            storage.register_storage[frame.register_offset + closure.captures.len() + i] =
+                t.clone();
+        }
+
+        frame.function = closure.function.clone();
+        frame.pointer = 0;
+
+        self.storage.temporary_storage.clear()
     }
 
     /// Creates a new frame from a closure and arguments in the VM's temporary storage
@@ -178,17 +251,20 @@ impl VM {
     ) -> Result<()> {
         self.increase_pointer(1);
         if tail_call {
-            self.last_frame_mut()?.transform_for_tail_call(closure)
+            self.transform_last_frame_for_tail_call(closure);
+            Ok(())
         } else {
-            let offset = closure.function.capture_offset;
-            let mut index = offset;
-            let mut new_frame = Frame::new(closure, result_slot);
+            let capture_offset = closure.function.capture_offset;
+            let mut index = capture_offset;
+            let register_offset =
+                self.last_frame()?.register_offset + self.last_frame()?.function.registers;
+            let mut new_frame = self.create_new_frame(closure, register_offset, result_slot);
             loop {
                 match self.last_frame()?.opcode() {
                     Some(OpCode::CallArgument(argument_register)) => {
                         let value: Value =
-                            self.last_frame()?.registers[argument_register as usize].clone();
-                        new_frame.registers[index] = value;
+                            self.value_in_last_frame(argument_register as usize).clone();
+                        self.storage.register_storage[index + register_offset] = value;
                         self.increase_pointer(1);
                         index += 1;
                     }
@@ -196,7 +272,7 @@ impl VM {
                 }
             }
 
-            if index != new_frame.function.arity + offset {
+            if index != new_frame.function.arity + capture_offset {
                 Err(anyhow!("Called function with wrong number of arguments"))
             } else {
                 self.frames.push(new_frame);
@@ -207,26 +283,27 @@ impl VM {
 
     fn call_native_function(&mut self, function: NativeFunction) -> Result<Value> {
         self.increase_pointer(1);
-        let mut arguments: Vec<Value> = vec![];
         loop {
             match self.last_frame()?.opcode() {
                 Some(OpCode::CallArgument(argument_register)) => {
-                    let value: Value =
-                        self.last_frame()?.registers[argument_register as usize].clone();
-                    arguments.push(value);
+                    let value: Value = self.value_in_last_frame(argument_register as usize).clone();
+
+                    self.storage.temporary_storage.push(value);
                     self.increase_pointer(1);
                 }
                 _ => break,
             }
         }
-        function.call(&arguments)
+        let result = function.call(&self.storage.temporary_storage);
+        self.storage.temporary_storage.clear();
+        result
     }
 
     fn call(&mut self, function_register: usize, result_slot: usize) -> Result<()> {
-        match self.last_frame()?.registers[function_register].clone() {
+        match self.value_in_last_frame(function_register).clone() {
             Value::NativeFunction(nf) => {
                 let value = self.call_native_function(nf)?;
-                self.last_frame_mut()?.registers[result_slot] = value;
+                *self.value_in_last_frame(result_slot) = value;
             }
             Value::Object(Object::Closure(closure)) => {
                 self.create_and_push_new_frame(closure, result_slot, false)?
@@ -241,37 +318,40 @@ impl VM {
         Ok(())
     }
 
-    fn vm_return(&mut self, return_value_position: usize) -> Result<Option<Value>> {
-        let value = self
-            .last_frame_mut()?
-            .registers
-            .swap_remove(return_value_position);
-        let return_position = self.last_frame()?.return_position;
+    fn pop_frame(&mut self) {
+        let f = self.last_frame().unwrap();
+        let range = f.register_range();
+        self.storage.register_storage[range].fill(Value::Uninit);
         self.frames.pop();
+    }
+
+    fn vm_return(&mut self, return_value_position: usize) -> Result<Option<Value>> {
+        let value = self.value_in_last_frame(return_value_position).clone();
+        let return_position = self.last_frame()?.return_position;
+        self.pop_frame();
         if self.frames.is_empty() {
             Ok(Some(value))
         } else {
-            self.last_frame_mut()?.registers[return_position] = value;
+            *self.value_in_last_frame(return_position) = value;
             Ok(None)
         }
     }
 
     fn close_value(&mut self, register_position: usize) {
-        self.last_frame_mut().unwrap().registers[register_position] = Value::Nil;
-
+        *self.value_in_last_frame(register_position) = Value::Uninit;
         self.increase_pointer(1);
     }
 
     fn copy_value(&mut self, from: usize, target: usize) -> Result<()> {
         let f = self.last_frame_mut()?;
-        f.registers[target] = f.registers[from].clone();
+        *self.value_in_last_frame(target) = self.value_in_last_frame(from).clone();
         self.increase_pointer(1);
         Ok(())
     }
 
     fn load_constant(&mut self, constant_index: usize, target: usize) {
-        let f = self.last_frame_mut().unwrap();
-        f.registers[target] = f.function.constants[constant_index].clone();
+        *self.value_in_last_frame(target) =
+            self.last_frame().unwrap().function.constants[constant_index].clone();
         self.increase_pointer(1);
     }
 

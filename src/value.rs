@@ -32,6 +32,7 @@ pub enum Value {
     Double(f64),
     Bool(bool),
     Nil,
+    Uninit,
     NativeFunction(NativeFunction),
     Object(Object),
 }

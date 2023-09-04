@@ -27,7 +27,7 @@ fn main() {
     c.compile_expression(None, &e[0], true).unwrap();
     let f = c.frame_to_function();
 
-    let mut vm = VM::from_function(f);
+    let mut vm = VM::from_bare_function(f);
     loop {
         match vm.step() {
             Ok(Some(v)) => {
