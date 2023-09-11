@@ -10,7 +10,7 @@ pub enum TokeniserError {
 
 type Result<Success> = std::result::Result<Success, TokeniserError>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Location<'a> {
     pub file: &'a str,
     pub source: &'a str,
