@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use crate::expression::Symbol;
+
 #[derive(PartialEq, Debug)]
 pub enum TokeniserError {
     OpenString,
@@ -8,16 +10,18 @@ pub enum TokeniserError {
 
 type Result<Success> = std::result::Result<Success, TokeniserError>;
 
+#[derive(Debug, PartialEq)]
 pub struct Location<'a> {
     pub file: &'a str,
     pub source: &'a str,
-    start_pos: usize,
-    end_pos: usize,
+    pub start_pos: usize,
+    pub end_pos: usize,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum TokenData<'a> {
     Pipe,
+    ExclamationMark,
     Apostrophe,
     Comma,
     OpenSquareBracket,
@@ -29,15 +33,22 @@ pub enum TokenData<'a> {
     OpenParen,
     CloseParen,
     Dollar,
+    Cond,
     Colon,
     Let,
     LetRec,
     Extract,
+    True,
+    False,
+    Nil,
+    Else,
+    Tilde,
     Number(&'a str),
     String(&'a str),
     Symbol(&'a str),
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Token<'a> {
     pub data: TokenData<'a>,
     pub location: Location<'a>,
@@ -60,10 +71,25 @@ impl<'a> TokenIterator<'a> {
 }
 
 impl<'a> Iterator for TokenIterator<'a> {
-    type Item = Token<'a>;
+    type Item = Result<Token<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        match Token::get_token_from_string(self.source.get(self.pos..)?) {
+            Ok(Some((t, start, end))) => {
+                self.pos += end;
+                Some(Ok(Token {
+                    data: t,
+                    location: Location {
+                        file: self.file,
+                        source: self.source,
+                        start_pos: self.pos + start,
+                        end_pos: self.pos + end,
+                    },
+                }))
+            }
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
@@ -95,6 +121,8 @@ impl<'a> Token<'a> {
             "<" => Some(TokenData::OpenAngleBracket),
             ">" => Some(TokenData::CloseAngleBracket),
             ":" => Some(TokenData::Colon),
+            "!" => Some(TokenData::ExclamationMark),
+            "~" => Some(TokenData::Tilde),
             _ => None,
         }
     }
@@ -105,6 +133,11 @@ impl<'a> Token<'a> {
             "let" => Some(TokenData::Let),
             "letrec" => Some(TokenData::LetRec),
             "extract" => Some(TokenData::Extract),
+            "else" => Some(TokenData::Else),
+            "cond" => Some(TokenData::Cond),
+            "true" => Some(TokenData::True),
+            "false" => Some(TokenData::False),
+            "nil" => Some(TokenData::Nil),
             _ => None,
         }
     }
@@ -266,17 +299,24 @@ impl<'a> Token<'a> {
                 start_offset + string_offset,
             )))
         } else if let Some((symbol_token, string_offset)) = Self::match_symbol(s) {
-            Ok(Some((
-                TokenData::Symbol(symbol_token),
-                start_offset,
-                start_offset + string_offset,
-            )))
+            if let Some(kw) = Self::matches_keyword(symbol_token) {
+                Ok(Some((kw, start_offset, start_offset + string_offset)))
+            } else {
+                Ok(Some((
+                    TokenData::Symbol(symbol_token),
+                    start_offset,
+                    start_offset + string_offset,
+                )))
+            }
         } else {
             Err(TokeniserError::NoMatch)
         }
     }
 
-    pub fn tokenise_source(source: &'a str, file: &'a str) -> impl Iterator<Item = Token<'a>> {
+    pub fn tokenise_source(
+        source: &'a str,
+        file: &'a str,
+    ) -> impl Iterator<Item = Result<Token<'a>>> {
         TokenIterator {
             source,
             file,
@@ -365,5 +405,48 @@ mod test {
             Token::get_token_from_string("\"open"),
             Err(TokeniserError::OpenString)
         )
+    }
+
+    #[test]
+    fn tokenise_source_works() {
+        use TokenData as T;
+        assert_eq!(
+            Token::tokenise_source("|x y|{x `* -2.0}", "")
+                .map(|x| x.unwrap().data)
+                .collect::<Vec<_>>(),
+            vec![
+                T::Pipe,
+                T::Symbol("x"),
+                T::Symbol("y"),
+                T::Pipe,
+                T::OpenCurlyBracket,
+                T::Symbol("x"),
+                T::Apostrophe,
+                T::Symbol("*"),
+                T::Number("-2.0"),
+                T::CloseCurlyBracket
+            ]
+        );
+        assert_eq!(
+            Token::tokenise_source("let x 2, y cond {true ~ \"3\", else nil\n}", "")
+                .map(|x| x.unwrap().data)
+                .collect::<Vec<_>>(),
+            vec![
+                T::Let,
+                T::Symbol("x"),
+                T::Number("2"),
+                T::Comma,
+                T::Symbol("y"),
+                T::Cond,
+                T::OpenCurlyBracket,
+                T::True,
+                T::Tilde,
+                T::String("\"3\""),
+                T::Comma,
+                T::Else,
+                T::Nil,
+                T::CloseCurlyBracket
+            ]
+        );
     }
 }

@@ -55,6 +55,13 @@ $a d = 2
 d`$a = 2
 )
 
+** Conditions are done with
+cond {
+a ~ 3,
+b ~ 4,
+else 5
+}
+
 * Things to do
 - [ ] Add in structs
 - [X] Modify tail calls to recursive functions use the same stack frame?? (maybe not reasonable)
