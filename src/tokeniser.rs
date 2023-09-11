@@ -3,6 +3,7 @@ use std::error::Error;
 #[derive(PartialEq, Debug)]
 pub enum TokeniserError {
     OpenString,
+    NoMatch,
 }
 
 type Result<Success> = std::result::Result<Success, TokeniserError>;
@@ -108,7 +109,7 @@ impl<'a> Token<'a> {
         }
     }
 
-    fn match_string(source: &'a str) -> Result<Option<(TokenData, usize)>> {
+    fn match_string(source: &'a str) -> Result<Option<(&str, usize)>> {
         match source.get(0..1) {
             Some("\"") => {
                 let mut offset = 0;
@@ -123,26 +124,99 @@ impl<'a> Token<'a> {
                         return Err(TokeniserError::OpenString);
                     }
                 }
-                Ok(Some((TokenData::String(&source[..offset + 2]), offset + 2)))
+                Ok(Some((&source[..offset + 2], offset + 2)))
             }
             _ => Ok(None),
         }
     }
 
-    fn match_symbol(source: &'a str) -> (&str, usize) {
+    fn match_symbol(source: &'a str) -> Option<(&str, usize)> {
         let mut offset = 0;
         loop {
-            let source = &source[offset..];
-            if Self::match_single(source).is_some()
-                || Self::is_whitespace(source)
-                || source.get(0..1).map(|c| c == "\"").unwrap_or(true)
-            {
-                break;
+            if let Some(s) = source.get(offset..) {
+                if Self::match_single(s).is_some()
+                    || Self::is_whitespace(s)
+                    || s.get(0..1).map(|c| c == "\"").unwrap_or(true)
+                {
+                    break;
+                } else {
+                    offset += 1;
+                }
             } else {
-                offset += 1;
+                break;
             }
         }
-        (&source[..offset], offset)
+        if offset == 0 {
+            None
+        } else {
+            Some((&source[..offset], offset))
+        }
+    }
+
+    fn match_digits(source: &'a str) -> Option<usize> {
+        fn is_digit(s: &str) -> bool {
+            match s {
+                "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => true,
+                _ => false,
+            }
+        }
+        let mut offset = 0;
+        loop {
+            if let Some(d) = source.get(offset..offset + 1) {
+                if is_digit(d) {
+                    offset += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        if offset == 0 {
+            None
+        } else {
+            Some(offset)
+        }
+    }
+
+    fn match_sign(source: &'a str) -> bool {
+        match source.get(0..1) {
+            Some("+") | Some("-") => true,
+            _ => false,
+        }
+    }
+
+    fn match_exponent(source: &'a str) -> Option<usize> {
+        let mut offset = 0;
+        match source.get(0..1)? {
+            "e" | "E" => {
+                offset += 1;
+                if Self::match_sign(source.get(offset..)?) {
+                    offset += 1;
+                }
+                Some(offset + Self::match_digits(source.get(offset..)?)?)
+            }
+            _ => None,
+        }
+    }
+
+    fn match_number(source: &'a str) -> Option<(&str, usize)> {
+        let mut offset = 0;
+        if Self::match_sign(source) {
+            offset += 1;
+        };
+        let n = Self::match_digits(&source.get(offset..)?)?;
+        offset += n;
+        if source.get(offset..offset + 1) == Some(".") {
+            offset += 1;
+            if let Some(n) = &source.get(offset..).and_then(|x| Self::match_digits(x)) {
+                offset += n;
+            }
+        }
+        if let Some(n) = source.get(offset..).and_then(|x| Self::match_exponent(x)) {
+            offset += n;
+        };
+        Some((&source[..offset], offset))
     }
 
     /// Returns true if the next character in the string is whitespace
@@ -181,12 +255,24 @@ impl<'a> Token<'a> {
             Ok(Some((s, start_offset, start_offset + 1)))
         } else if let Some((string_token, string_offset)) = Self::match_string(s)? {
             Ok(Some((
-                string_token,
+                TokenData::String(string_token),
+                start_offset,
+                start_offset + string_offset,
+            )))
+        } else if let Some((number_token, string_offset)) = Self::match_number(s) {
+            Ok(Some((
+                TokenData::Number(number_token),
+                start_offset,
+                start_offset + string_offset,
+            )))
+        } else if let Some((symbol_token, string_offset)) = Self::match_symbol(s) {
+            Ok(Some((
+                TokenData::Symbol(symbol_token),
                 start_offset,
                 start_offset + string_offset,
             )))
         } else {
-            Ok(None)
+            Err(TokeniserError::NoMatch)
         }
     }
 
@@ -216,27 +302,68 @@ mod test {
 
     #[test]
     fn match_string_works() {
-        assert_eq!(
-            Token::match_string("\"this\""),
-            Ok(Some((TokenData::String("\"this\""), 6)))
-        );
+        assert_eq!(Token::match_string("\"this\""), Ok(Some(("\"this\"", 6))));
         assert_eq!(
             Token::match_string("\"open"),
             Err(TokeniserError::OpenString)
         );
         assert_eq!(
             Token::match_string("\"\\\"hi\\\"\""),
-            Ok(Some((TokenData::String("\"\\\"hi\\\"\""), 8)))
+            Ok(Some(("\"\\\"hi\\\"\"", 8)))
         );
         assert_eq!(Token::match_string("none"), Ok(None));
     }
 
     #[test]
     fn match_symbol_works() {
-        assert_eq!(Token::match_symbol("sym"), ("sym", 3));
-        assert_eq!(Token::match_symbol("sym`"), ("sym", 3));
-        assert_eq!(Token::match_symbol("sym  "), ("sym", 3));
-        assert_eq!(Token::match_symbol("sym\""), ("sym", 3));
-        assert_eq!(Token::match_symbol(""), ("", 0));
+        assert_eq!(Token::match_symbol("sym"), Some(("sym", 3)));
+        assert_eq!(Token::match_symbol("sym`"), Some(("sym", 3)));
+        assert_eq!(Token::match_symbol("sym  "), Some(("sym", 3)));
+        assert_eq!(Token::match_symbol("sym\""), Some(("sym", 3)));
+        assert_eq!(Token::match_symbol(""), None);
+    }
+
+    #[test]
+    fn match_digits_works() {
+        assert_eq!(Token::match_digits("123"), Some(3));
+        assert_eq!(Token::match_digits("1 3"), Some(1));
+        assert_eq!(Token::match_digits("a123"), None);
+    }
+
+    #[test]
+    fn match_decimal_works() {
+        assert_eq!(Token::match_number("2.3"), Some(("2.3", 3)));
+        assert_eq!(Token::match_number("-2.3"), Some(("-2.3", 4)));
+        assert_eq!(Token::match_number("101202 "), Some(("101202", 6)));
+        assert_eq!(Token::match_number(" "), None);
+        assert_eq!(Token::match_number("-2.e-10"), Some(("-2.e-10", 7)));
+        assert_eq!(Token::match_number("-2.E10"), Some(("-2.E10", 6)));
+        assert_eq!(Token::match_number("-2.e+1"), Some(("-2.e+1", 6)));
+        assert_eq!(Token::match_number("-2e1"), Some(("-2e1", 4)));
+        assert_eq!(Token::match_number("+2.1e+10"), Some(("+2.1e+10", 8)));
+    }
+
+    #[test]
+    fn get_token_from_string_works() {
+        assert_eq!(
+            Token::get_token_from_string("`2"),
+            Ok(Some((TokenData::Apostrophe, 0, 1)))
+        );
+        assert_eq!(
+            Token::get_token_from_string("   |2"),
+            Ok(Some((TokenData::Pipe, 3, 4)))
+        );
+        assert_eq!(
+            Token::get_token_from_string(" \"this\" "),
+            Ok(Some((TokenData::String("\"this\""), 1, 7)))
+        );
+        assert_eq!(
+            Token::get_token_from_string("\n\n0.3e10 "),
+            Ok(Some((TokenData::Number("0.3e10"), 2, 8)))
+        );
+        assert_eq!(
+            Token::get_token_from_string("\"open"),
+            Err(TokeniserError::OpenString)
+        )
     }
 }
