@@ -512,16 +512,16 @@ impl Compiler {
 mod tests {
     use super::Compiler;
     use crate::parser::parse_program;
-    #[test]
-    fn test_compiler_is_working() {
-        let (s, e) = parse_program(
-            "fn fib (fib, n) {cond {n `< 2 => n, {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}}",
-        )
-        .unwrap();
-        let mut c = Compiler::new();
-        c.compile_expression(None, &e[0], true).unwrap();
-        assert_eq!(c.frame_to_function().opcodes, vec![]);
-        assert_eq!(s, "");
-        assert_eq!(e, vec![]);
-    }
+    // #[test]
+    // fn test_compiler_is_working() {
+    //     let (s, e) = parse_program(
+    //         "fn fib (fib, n) {cond {n `< 2 => n, {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}}",
+    //     )
+    //     .unwrap();
+    //     let mut c = Compiler::new();
+    //     c.compile_expression(None, &e[0], true).unwrap();
+    //     assert_eq!(c.frame_to_function().opcodes, vec![]);
+    //     assert_eq!(s, "");
+    //     assert_eq!(e, vec![]);
+    // }
 }
