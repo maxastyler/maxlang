@@ -1,8 +1,61 @@
-
 * MAXLANG
 
-An expression based register-based bytecode interpreted language
-** Things to do
+An expression based interpreted language
+
+Files can be evaluated, and return a result - this is a "module system".
+Data types are:
+bool, double, string, symbol, function, list, dict
+
+true, false, "string", $symbol,
+
+** Functions are defined like |a b c| body
+
+where the next term is the body of the function.
+
+A list is defined as [1, 2, 3, 4]
+A dict is defined as <a: b, c: d>
+
+** Code can be grouped by two block constructs:
+{} <- introduces a new scope
+() <- doesn't introduce a new scope
+The result of these blocks is either the last value, or nil if empty
+Expressions are separated inside the blocks with ,:
+
+** Assignment:
+A value can be assigned with "let":
+
+let x 2, y 3, z 4
+multiple assignments can be done in a let statement, with the last one being the final result
+
+Recursive assignment, where the expression being assigned to a variable has access to that variable
+can be defined with
+letrec fac |n| n `+ (fac (n `- 1))
+
+** Function call
+Functions are called by a symbol, then arguments:
+myfun 1 2 arg3
+
+They are curried if less than the required number of arguments is given
+
+Functions can be called infix by prepending with `:
+The sum function takes two things: + 2 3 = 5
+This can be made infix with: 2 `+ 3 = 5
+
+** Symbols can be imported into the current scope using extract
+
+extract a b c d e : dict
+
+This binds the given symbols to the corresponding values of those symbols in the dictionary
+
+** Symbols can be called to extract stuff from dictionaries
+
+with d = {a: 2}:
+$a d = 2
+(or, with infix:
+d`$a = 2
+)
+
+* Things to do
 - [ ] Add in structs
 - [X] Modify tail calls to recursive functions use the same stack frame?? (maybe not reasonable)
 - [ ] Add in a trait system (similar to rust/elixir behaviours)
