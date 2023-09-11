@@ -16,21 +16,21 @@ pub enum Literal<'a> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Let<'a> {
-    recursive: bool,
-    pairs: Vec<(Symbol, LocatedExpression<'a>)>,
+    pub recursive: bool,
+    pub pairs: Vec<(Symbol, LocatedExpression<'a>)>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Block<'a> {
-    scope_introducing: bool,
-    ignored: Vec<LocatedExpression<'a>>,
-    last: Box<LocatedExpression<'a>>,
+    pub scope_introducing: bool,
+    pub ignored: Vec<LocatedExpression<'a>>,
+    pub last: Box<LocatedExpression<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocatedExpression<'a> {
-    expression: Expression<'a>,
-    location: Location<'a>,
+    pub expression: Expression<'a>,
+    pub location: Location<'a>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
