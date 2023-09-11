@@ -18,6 +18,17 @@ pub struct Location<'a> {
     pub end_pos: usize,
 }
 
+impl<'a> Location<'a> {
+    pub fn between(from: &Location<'a>, to: &Location<'a>) -> Location<'a> {
+        Location {
+            file: from.file,
+            source: from.source,
+            start_pos: from.start_pos,
+            end_pos: to.end_pos,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum TokenData<'a> {
     Pipe,
@@ -76,8 +87,7 @@ impl<'a> Iterator for TokenIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match Token::get_token_from_string(self.source.get(self.pos..)?) {
             Ok(Some((t, start, end))) => {
-                self.pos += end;
-                Some(Ok(Token {
+                let token = Token {
                     data: t,
                     location: Location {
                         file: self.file,
@@ -85,7 +95,9 @@ impl<'a> Iterator for TokenIterator<'a> {
                         start_pos: self.pos + start,
                         end_pos: self.pos + end,
                     },
-                }))
+                };
+                self.pos += end;
+                Some(Ok(token))
             }
             Ok(None) => None,
             Err(e) => Some(Err(e)),
