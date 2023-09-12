@@ -55,6 +55,21 @@ pub enum Expression<'a> {
     Symbol(Symbol),
 }
 
+impl<'a> From<&str> for Expression<'a> {
+    fn from(value: &str) -> Self {
+        Expression::Symbol(Symbol(value.into()))
+    }
+}
+
+impl<'a> Expression<'a> {
+    pub fn with_location(self, location: Location<'a>) -> LocatedExpression<'a> {
+        LocatedExpression {
+            expression: self,
+            location,
+        }
+    }
+}
+
 impl<'a> Debug for Expression<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
