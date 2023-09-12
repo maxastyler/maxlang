@@ -4,12 +4,17 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq)]
-pub enum ParseError {
+pub enum ParseErrorType {
     NoMoreTokens,
-    UndefinedError,
 }
 
-type Result<Success> = std::result::Result<Success, ParseError>;
+#[derive(Debug, PartialEq)]
+pub struct ParseError<'a> {
+    error_type: ParseErrorType,
+    location: Location<'a>,
+}
+
+type Result<'a, Success> = std::result::Result<Success, ParseError<'a>>;
 
 trait Take {
     type Output;
@@ -46,30 +51,80 @@ pub fn parse_no_arg_call<'a>(
     ))
 }
 
+// fn infix_call_inner(input: &str) -> IResult<&str, (Expression, Vec<Expression>)> {
+//     let (s, _) = tag("`")(input)?;
+//     let (s, _) = multispace0(s)?;
+//     let (s, fun_exp) = l1.parse(s)?;
+//     let (s, _) = multispace0(s)?;
+//     let (s, rest) = separated_list0(multispace1, l1)(s)?;
+//     Ok((s, (fun_exp, rest)))
+// }
+
+// fn infix_call(input: &str) -> IResult<&str, Expression> {
+//     let (s, first) = l1.parse(input)?;
+//     let (s, _) = multispace0(s)?;
+//     let (s, rest) = many1(s_d(infix_call_inner))(s)?;
+//     Ok((
+//         s,
+//         rest.into_iter().fold(first, |a, v| {
+//             Expression::Call(Box::new(v.0), {
+//                 let mut args = vec![a];
+//                 args.extend(v.1);
+//                 args
+//             })
+//         }),
+//     ))
+// }
+
+pub fn infix_call_inner<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(
+    &'a [Token<'a>],
+    (LocatedExpression<'a>, Vec<LocatedExpression<'a>>),
+)> {
+    let mut t;
+    let mut first_call;
+    t = tokens;
+    let (new_t, first) = t.take_matching(TokenData::Apostrophe)?;
+    t = new_t;
+    (t, first_call) = parse_left_recursive_expression_1(t)?;
+    let mut args = vec![];
+    while let Some((new_t, e)) = parse_left_recursive_expression_1(t) {
+        t = new_t;
+        args.push(e);
+    }
+    first_call.location = Location::between(&first.location, &first_call.location);
+    Some((t, (first_call, args)))
+}
+
 pub fn parse_infix_call<'a>(
     tokens: &'a [Token<'a>],
 ) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
-    let mut arguments = vec![];
-    let (t, e) = parse_left_recursive_expression_1(tokens)?;
-    arguments.push(e.clone());
-    let (t, _) = t.take_matching(TokenData::Apostrophe)?;
-    let (t, func) = parse_left_recursive_expression_1(t)?;
+    let (t, first) = parse_left_recursive_expression_1(tokens)?;
     let mut t = t;
-    while let Some((new_t, e)) = parse_left_recursive_expression_2(t) {
+    let mut rest = vec![];
+    while let Some((new_t, e)) = infix_call_inner(t) {
         t = new_t;
-        arguments.push(e);
+        rest.push(e);
     }
-    let location = Location::between(
-        &e.location,
-        arguments.last().map_or(&func.location, |x| &x.location),
-    );
-    Some((
-        t,
-        LocatedExpression {
-            expression: Expression::Call(Box::new(func), arguments),
-            location,
-        },
-    ))
+    if rest.len() == 0 {
+        None
+    } else {
+        Some((
+            t,
+            rest.into_iter().fold(first, |a, (func, other_args)| {
+                let location =
+                    Location::between(&a.location, &other_args.last().unwrap_or(&func).location);
+                let mut args = vec![a];
+                args.extend(other_args.into_iter());
+
+                LocatedExpression {
+                    expression: Expression::Call(Box::new(func), args),
+                    location,
+                }
+            }),
+        ))
+    }
 }
 
 pub fn parse_normal_call<'a>(
