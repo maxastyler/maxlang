@@ -55,7 +55,7 @@ pub fn parse_infix_call<'a>(
     let (t, _) = t.take_matching(TokenData::Apostrophe)?;
     let (t, func) = parse_left_recursive_expression_1(t)?;
     let mut t = t;
-    while let Some((new_t, e)) = parse_left_recursive_expression_1(t) {
+    while let Some((new_t, e)) = parse_left_recursive_expression_2(t) {
         t = new_t;
         arguments.push(e);
     }
@@ -99,6 +99,7 @@ pub fn parse_non_left_recursive_expression<'a>(
     tokens: &'a [Token<'a>],
 ) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
     parse_literal(tokens)
+        .or_else(|| parse_symbol(tokens))
         .or_else(|| parse_function(tokens))
         .or_else(|| parse_cond_block(tokens))
         .or_else(|| parse_scoped_block(tokens))
@@ -121,7 +122,6 @@ pub fn parse_left_recursive_expression_2<'a>(
 pub fn parse_expression<'a>(
     tokens: &'a [Token<'a>],
 ) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
-    println!("PARSING EXPRESSION: {:?}", tokens);
     parse_normal_call(tokens).or_else(|| parse_left_recursive_expression_2(tokens))
 }
 
@@ -175,15 +175,27 @@ fn parse_assignment<'a>(
 
 fn parse_function<'a>(tokens: &'a [Token<'a>]) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
     let mut t = tokens;
-    (t, _) = t.take_matching(TokenData::Pipe)?;
+    let (new_t, start) = t.take_matching(TokenData::Pipe)?;
+    t = new_t;
     let mut arguments = vec![];
     while let Some((new_t, i)) = t.take_matching(TokenData::Symbol("")) {
-        arguments.push(i);
+        arguments.push(match i.data {
+            TokenData::Symbol(s) => Some(Symbol(s.into())),
+            _ => None,
+        }?);
         t = new_t
     }
     (t, _) = t.take_matching(TokenData::Pipe)?;
 
-    parse_expression(t)
+    let (new_t, body) = parse_expression(t)?;
+    let location = Location::between(&start.location, &body.location);
+    Some((
+        new_t,
+        LocatedExpression {
+            expression: Expression::Function(arguments, Box::new(body)),
+            location,
+        },
+    ))
 }
 
 fn parse_symbol<'a>(tokens: &'a [Token<'a>]) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {

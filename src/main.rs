@@ -1,14 +1,3 @@
-// use std::rc::Rc;
-
-// use compiler::Compiler;
-// use parser::parse_program;
-// use vm::VM;
-
-// use crate::{
-//     expression::{Expression, Symbol},
-//     value::{Closure, Function},
-// };
-
 // mod compiler;
 mod expression;
 // mod frame;
@@ -20,10 +9,12 @@ mod tokeniser;
 // mod vm;
 
 fn main() {
-    let ts = tokeniser::Token::tokenise_source("a", "")
+    let ts = tokeniser::Token::tokenise_source("a `do `something", "")
         .map(|x| x.unwrap())
         .collect::<Vec<_>>();
-    println!("{:?}", parser::parse_expression(&ts).unwrap().1);
+    let (left, exp) = parser::parse_expression(&ts).unwrap();
+    println!("LEFT: {:?}", left);
+    println!("{:?}", exp);
 }
 
 // fn main() {
