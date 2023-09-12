@@ -70,12 +70,18 @@ pub fn parse_no_arg_call<'a>(
 ) -> Result<(&'a [Token<'a>], LocatedExpression<'a>)> {
     let (t, e) = parse_non_left_recursive_expression(tokens)?;
     let (t, f) = t.take_matching(TokenData::ExclamationMark)?;
+    let mut t = t;
+    let mut calls = vec![f];
+    while let Ok((new_t, f)) = t.take_matching(TokenData::ExclamationMark) {
+        t = new_t;
+        calls.push(f);
+    }
     Ok((
         t,
-        LocatedExpression {
-            expression: Expression::Call(Box::new(e.clone()), vec![]),
-            location: Location::between(&e.location, &f.location),
-        },
+        calls.into_iter().fold(e.clone(), |a, v| {
+            Expression::Call(Box::new(a.clone()), vec![])
+                .with_location(Location::between(&e.location, &v.location))
+        }),
     ))
 }
 
