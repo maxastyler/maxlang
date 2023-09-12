@@ -3,9 +3,7 @@ use std::{collections::HashMap, iter::repeat, rc::Rc};
 
 use crate::{
     expression::{Expression, Literal, Symbol},
-    native_function::NativeFunction,
     opcode::OpCode,
-    value::{Function, Value},
 };
 
 #[derive(PartialEq, Debug, Clone)]
@@ -22,16 +20,19 @@ pub enum Local {
 pub struct LocalIndex(usize);
 #[derive(PartialEq, Debug, Clone)]
 pub struct CaptureIndex(usize);
+#[derive(PartialEq, Debug, Clone)]
+pub struct ConstIndex(usize);
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum FrameIndex {
     LocalIndex(LocalIndex),
     CaptureIndex(CaptureIndex),
+    ConstIndex(ConstIndex),
 }
 
 #[derive(Debug)]
 pub struct CompilerFunction {
-    pub opcodes: Vec<OpCode<usize, FrameIndex>>,
+    pub opcodes: Vec<OpCode<FrameIndex>>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<CompilerFunction>>,
     pub arity: usize,
@@ -46,7 +47,7 @@ pub struct CompilerFrame {
     /// A triple of symbol, depth, register
     pub captures: Vec<FrameIndex>,
     pub depth: usize,
-    pub opcodes: Vec<OpCode<usize, FrameIndex>>,
+    pub opcodes: Vec<OpCode<FrameIndex>>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<Function>>,
 }

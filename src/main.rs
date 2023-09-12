@@ -1,11 +1,11 @@
-// mod compiler;
+mod compiler;
 mod expression;
 // mod frame;
-// mod native_function;
-// mod opcode;
+mod native_function;
+mod opcode;
 mod parser;
 mod tokeniser;
-// mod value;
+mod value;
 // mod vm;
 
 fn main() {
