@@ -1,20 +1,17 @@
-mod compiler;
+// mod compiler;
 mod expression;
 // mod frame;
-mod native_function;
-mod opcode;
+// mod native_function;
+// mod opcode;
 mod parser;
 mod tokeniser;
-mod value;
+// mod value;
 // mod vm;
 
 fn main() {
-    let ts = tokeniser::Token::tokenise_source(
-        "a!!",
-        "",
-    )
-    .map(|x| x.unwrap())
-    .collect::<Vec<_>>();
+    let ts = tokeniser::Token::tokenise_source("a!!", "")
+        .map(|x| x.unwrap())
+        .collect::<Vec<_>>();
     let (left, exp) = parser::parse_expression(&ts).unwrap();
     println!("LEFT: {:?}", left);
     println!("{:?}", exp);
