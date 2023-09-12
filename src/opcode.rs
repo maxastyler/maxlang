@@ -2,8 +2,11 @@ use std::fmt::Debug;
 
 use crate::native_function::NativeFunction;
 
+type VecOffset = i8;
+type VecIndex = u8;
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum OpCode<VecIndex, RegisterIndex> {
+pub enum OpCode<RegisterIndex> {
     /// Call the function in register .0,
     /// Putting the result into the register .1
     /// Arguments are given after the call
@@ -13,23 +16,21 @@ pub enum OpCode<VecIndex, RegisterIndex> {
     TailCall(RegisterIndex),
 
     CallArgument(RegisterIndex),
-
     /// Return the value in the given register
     Return(RegisterIndex),
-
-    /// Unconditionally jump to the given position
-    Jump(VecIndex),
+    /// Unconditionally jump with the given offset
+    Jump(VecOffset),
     /// Check the boolean in .0, if false, jump to the given position, otherwise continue
-    JumpToPositionIfFalse(RegisterIndex, VecIndex),
+    JumpToPositionIfFalse(RegisterIndex, VecOffset),
     /// Copy the value from 0 to 1
     CopyValue(RegisterIndex, RegisterIndex),
     /// Load the constant from the constants array at 0 to the position 1
-    LoadConstant(VecIndex, RegisterIndex),
+    LoadConstant(RegisterIndex, RegisterIndex),
     /// Free the value at the given register
-    CloseValue(VecIndex),
+    CloseValue(RegisterIndex),
     /// Create closure. Takes the index of the function in the current chunk,
     /// puts the result in the register .1
-    CreateClosure(VecIndex, RegisterIndex),
+    CreateClosure(VecIndex, VecIndex),
     /// Capture a value from the current function
     CaptureValue(RegisterIndex),
     /// Unconditional crash
