@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, fmt::Debug};
 
 use crate::expression::Symbol;
 
@@ -10,12 +10,18 @@ pub enum TokeniserError {
 
 type Result<Success> = std::result::Result<Success, TokeniserError>;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct Location<'a> {
     pub file: &'a str,
     pub source: &'a str,
     pub start_pos: usize,
     pub end_pos: usize,
+}
+
+impl<'a> Debug for Location<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Loc ({} -> {})", self.start_pos, self.end_pos))
+    }
 }
 
 impl<'a> Location<'a> {
