@@ -62,6 +62,32 @@ b ~ 4,
 else 5
 }
 
+** Call order
+f x y!
+Should mean
+f x (y!)
+
+f x `* y
+should mean
+f (* x y)
+
+f x! `* y
+should mean
+f (* (x!) y)
+
+(f `g) `h
+should mean
+h(g(f))
+
+Infix expressions can have more infixes to their left, but not their right
+
+f `g `h 3
+f `g 2 `h 3
+
+
+s
+|x, y| a b!
+
 * Things to do
 - [ ] Add in structs
 - [X] Modify tail calls to recursive functions use the same stack frame?? (maybe not reasonable)

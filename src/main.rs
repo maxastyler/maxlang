@@ -20,7 +20,7 @@ mod tokeniser;
 // mod vm;
 
 fn main() {
-    let ts = tokeniser::Token::tokenise_source("[a, b]", "")
+    let ts = tokeniser::Token::tokenise_source("a", "")
         .map(|x| x.unwrap())
         .collect::<Vec<_>>();
     println!("{:?}", parser::parse_expression(&ts).unwrap().1);

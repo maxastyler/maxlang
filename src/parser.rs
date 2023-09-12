@@ -1,5 +1,5 @@
 use crate::{
-    expression::{Expression, Literal, LocatedExpression, Symbol},
+    expression::{Block, Expression, Let, Literal, LocatedExpression, Symbol},
     tokeniser::{Location, Token, TokenData},
 };
 
@@ -32,13 +32,145 @@ impl<'a> Take for [Token<'a>] {
     }
 }
 
+pub fn parse_no_arg_call<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    let (t, e) = parse_non_left_recursive_expression(tokens)?;
+    let (t, f) = t.take_matching(TokenData::ExclamationMark)?;
+    Some((
+        t,
+        LocatedExpression {
+            expression: Expression::Call(Box::new(e.clone()), vec![]),
+            location: Location::between(&e.location, &f.location),
+        },
+    ))
+}
+
+pub fn parse_infix_call<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    let mut arguments = vec![];
+    let (t, e) = parse_left_recursive_expression_1(tokens)?;
+    arguments.push(e.clone());
+    let (t, _) = t.take_matching(TokenData::Apostrophe)?;
+    let (t, func) = parse_left_recursive_expression_1(t)?;
+    let mut t = t;
+    while let Some((new_t, e)) = parse_left_recursive_expression_1(t) {
+        t = new_t;
+        arguments.push(e);
+    }
+    let location = Location::between(
+        &e.location,
+        arguments.last().map_or(&func.location, |x| &x.location),
+    );
+    Some((
+        t,
+        LocatedExpression {
+            expression: Expression::Call(Box::new(func), arguments),
+            location,
+        },
+    ))
+}
+
+pub fn parse_normal_call<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    let (t, func) = parse_left_recursive_expression_2(tokens)?;
+    let mut args = vec![];
+    let mut t = t;
+    while let Some((new_t, e)) = parse_left_recursive_expression_2(t) {
+        args.push(e);
+        t = new_t;
+    }
+
+    args.last().map(|last| {
+        let location = Location::between(&func.location, &last.location);
+        (
+            t,
+            LocatedExpression {
+                expression: Expression::Call(Box::new(func), args.clone()),
+                location,
+            },
+        )
+    })
+}
+
+pub fn parse_non_left_recursive_expression<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    parse_literal(tokens)
+        .or_else(|| parse_function(tokens))
+        .or_else(|| parse_cond_block(tokens))
+        .or_else(|| parse_scoped_block(tokens))
+        .or_else(|| parse_unscoped_block(tokens))
+        .or_else(|| parse_assignment(tokens))
+}
+
+pub fn parse_left_recursive_expression_1<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    parse_no_arg_call(tokens).or_else(|| parse_non_left_recursive_expression(tokens))
+}
+
+pub fn parse_left_recursive_expression_2<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    parse_infix_call(tokens).or_else(|| parse_left_recursive_expression_1(tokens))
+}
+
 pub fn parse_expression<'a>(
     tokens: &'a [Token<'a>],
 ) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
-    parse_list(tokens)
-        .or_else(|| parse_symbol(tokens))
-        .or_else(|| parse_function(tokens))
-        .or_else(|| parse_number(tokens))
+    println!("PARSING EXPRESSION: {:?}", tokens);
+    parse_normal_call(tokens).or_else(|| parse_left_recursive_expression_2(tokens))
+}
+
+fn parse_assignment_pair<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], (Symbol, LocatedExpression<'a>))> {
+    let (t, symbol) = tokens.take_matching(TokenData::Symbol(""))?;
+    let (t, exp) = parse_expression(t)?;
+    match symbol.data {
+        TokenData::Symbol(sym) => Some((t, (Symbol(sym.into()), exp))),
+        _ => None,
+    }
+}
+
+fn parse_assignment<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    let mut t;
+    let (new_t, start, recursive) = tokens
+        .take_matching(TokenData::Let)
+        .map(|(t, token)| (t, token, false))
+        .or_else(|| {
+            tokens
+                .take_matching(TokenData::LetRec)
+                .map(|(t, token)| (t, token, true))
+        })?;
+    t = new_t;
+    let mut pairs = vec![];
+
+    while let Some((new_t, e)) = parse_assignment_pair(t) {
+        pairs.push(e);
+        t = new_t;
+        if let Some((new_t, _)) = t.take_matching(TokenData::Comma) {
+            t = new_t
+        } else {
+            break;
+        }
+    }
+    let location = Location::between(
+        &start.location,
+        pairs.last().map_or(&start.location, |(_, e)| &e.location),
+    );
+    Some((
+        t,
+        LocatedExpression {
+            expression: Expression::Let(Let { recursive, pairs }),
+            location,
+        },
+    ))
 }
 
 fn parse_function<'a>(tokens: &'a [Token<'a>]) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
@@ -198,6 +330,105 @@ fn parse_quoted_symbol<'a>(
         )),
         _ => None,
     }
+}
+
+fn parse_block<'a>(
+    tokens: &'a [Token<'a>],
+    (delim_1, delim_2): (TokenData<'a>, TokenData<'a>),
+    scope_introducing: bool,
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    let mut t = tokens;
+    let (new_t, open_b) = t.take_matching(delim_1)?;
+    t = new_t;
+    let mut elements = vec![];
+    while let Some((new_t, e)) = parse_expression(t) {
+        elements.push(e);
+        t = new_t;
+        if let Some((new_t, _)) = t.take_matching(TokenData::Comma) {
+            t = new_t
+        } else {
+            break;
+        }
+    }
+    let (t, close_b) = t.take_matching(delim_2)?;
+    let block = if let Some((last, rest)) = elements.split_last() {
+        Block {
+            scope_introducing,
+
+            ignored: rest.iter().map(|x| x.clone()).collect(),
+            last: Box::new(last.clone()),
+        }
+    } else {
+        Block {
+            scope_introducing,
+            ignored: vec![],
+            last: Box::new(LocatedExpression {
+                expression: Expression::Literal(Literal::Nil),
+                location: Location::between(&open_b.location, &close_b.location),
+            }),
+        }
+    };
+
+    Some((
+        t,
+        LocatedExpression {
+            expression: Expression::Block(block),
+            location: Location::between(&open_b.location, &close_b.location),
+        },
+    ))
+}
+
+fn parse_scoped_block<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    parse_block(
+        tokens,
+        (TokenData::OpenCurlyBracket, TokenData::CloseCurlyBracket),
+        true,
+    )
+}
+
+fn parse_unscoped_block<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    parse_block(tokens, (TokenData::OpenParen, TokenData::CloseParen), false)
+}
+
+fn parse_condition<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(
+    &'a [Token<'a>],
+    (LocatedExpression<'a>, LocatedExpression<'a>),
+)> {
+    let (t, c) = parse_expression(tokens)?;
+    let (t, _) = t.take_matching(TokenData::Tilde)?;
+    let (t, r) = parse_expression(t)?;
+    let (t, _) = t.take_matching(TokenData::Comma)?;
+    Some((t, (c, r)))
+}
+
+fn parse_cond_block<'a>(
+    tokens: &'a [Token<'a>],
+) -> Option<(&'a [Token<'a>], LocatedExpression<'a>)> {
+    let mut t = tokens;
+    let (new_t, start) = t.take_matching(TokenData::Cond)?;
+    t = new_t;
+    (t, _) = t.take_matching(TokenData::OpenCurlyBracket)?;
+    let mut conditions = vec![];
+    while let Some((new_t, c)) = parse_condition(t) {
+        t = new_t;
+        conditions.push(c);
+    }
+    let (t, _) = t.take_matching(TokenData::Else)?;
+    let (t, else_exp) = parse_expression(t)?;
+    let (t, close) = t.take_matching(TokenData::CloseCurlyBracket)?;
+    Some((
+        t,
+        LocatedExpression {
+            expression: Expression::Condition(conditions, Box::new(else_exp)),
+            location: Location::between(&start.location, &close.location),
+        },
+    ))
 }
 
 #[cfg(test)]
