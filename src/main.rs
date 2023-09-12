@@ -9,9 +9,12 @@ mod tokeniser;
 // mod vm;
 
 fn main() {
-    let ts = tokeniser::Token::tokenise_source("a `do 2 3 `something other!", "")
-        .map(|x| x.unwrap())
-        .collect::<Vec<_>>();
+    let ts = tokeniser::Token::tokenise_source(
+        "a!!",
+        "",
+    )
+    .map(|x| x.unwrap())
+    .collect::<Vec<_>>();
     let (left, exp) = parser::parse_expression(&ts).unwrap();
     println!("LEFT: {:?}", left);
     println!("{:?}", exp);
