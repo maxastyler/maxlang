@@ -79,11 +79,23 @@ f (* (x!) y)
 should mean
 h(g(f))
 
-Infix expressions can have more infixes to their left, but not their right
+** Boxes
+Mutable values can be stored in a box, denoted with &value @dereferences the value
 
-f `g `h 3
-f `g 2 `h 3
+** Contexts
+Can pass down a context to the child. This is just a dict of symbols to values.
+Just like parameters in scheme
 
+
+start a context expression with a "with":
+Takes in the dictionary argument, which it merges with the above dict
+
+Values inside the expression (dynamically, not lexically) can access the context with
+^$a, ^$b, which access values belonging to the context.
+
+with <$a: 2, $b: 3> {
+cond {let x %a => x, else 3}
+}
 
 s
 |x, y| a b!
