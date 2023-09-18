@@ -10,7 +10,7 @@ use crate::{
     frame::Frame,
     native_function::{self, NativeFunction},
     opcode::{FunctionIndex, OpCode, RegisterIndex, ValueIndex},
-    value::{Closure, Function, Object, Placeholder, Value},
+    value::{Closure, Function, Object, Placeholder, Value, ClosureType},
 };
 
 pub enum RuntimeError {
@@ -18,6 +18,9 @@ pub enum RuntimeError {
     NotAFunction,
     NotABoolean,
     NoLastFrame,
+    ValueNotSet,
+    TooManyArguments,
+    NotEnoughArguments,
 }
 
 pub enum CallType {
@@ -54,38 +57,84 @@ impl VM {
         vm
     }
 
-    // pub fn step(&mut self) -> Result<Option<Value>> {
-    //     let oc = self
-    //         .last_frame()?
-    //         .opcode()
-    //         .ok_or(RuntimeError::NoMoreOpCodes)?;
-    //     match oc {
-    //         OpCode::Call(function_index, result_target) => {
-    //             self.run_call(function_index, result_target)
-    //         }
-    //         OpCode::TailCall(_) => todo!(),
-    //         OpCode::DeclareRecursive(_) => todo!(),
-    //         OpCode::FillRecursive(_, _) => todo!(),
-    //         OpCode::CallArgument(_) => todo!(),
-    //         OpCode::Return(_) => todo!(),
-    //         OpCode::Jump(_) => todo!(),
-    //         OpCode::JumpToPositionIfFalse(_, _) => todo!(),
-    //         OpCode::CopyValue(_, _) => todo!(),
-    //         OpCode::CloseValue(_) => todo!(),
-    //         OpCode::CreateClosure(_, _) => todo!(),
-    //         OpCode::CaptureValue(_) => todo!(),
-    //         OpCode::Crash => todo!(),
-    //         OpCode::InsertNativeFunction(_, _) => todo!(),
-    //     }
-    // }
+    pub fn get_call_arguments(&mut self, limit: Option<usize>) -> Result<Vec<Value>> {
+        let mut args = vec![];
+        while let Some(OpCode::CallArgument(index)) = self.last_frame()?.opcode() {
+            if limit.map(|l| args.len() >= l).unwrap_or(false) {
+                break;
+            } else {
+                args.push(self.last_frame()?.get_value_index(index));
+                self.increase_pointer(1)?;
+            }
+        }
+        Ok(args)
+    }
 
-    // pub fn run_call(
-    //     &mut self,
-    //     function_index: ValueIndex,
-    //     result_target: RegisterIndex,
-    // ) -> Result<()> {
+    pub fn run_tail_call(&mut self, function_index: ValueIndex) -> Result<Option<Value>> {
+        let args = self.get_call_arguments(None)?;
+        let function = self.last_frame()?.get_value_index(function_index);
+        let position = self.last_frame()?.return_position;
+        self.pop_frame();
+        match function {
+            Placeholder::Value(Value::Object(Object::Closure(closure))) => {
+                let new_closure = Rc::new(closure.add_arguments(args)?);
+                if new_closure.arguments.len() == new_closure.function.arity {
+                    self.create_and_push_new_frame(new_closure, position, true)?;
+                } else {
+                    Err(RuntimeError::NotEnoughArguments)
+                }
+            }
+            Placeholder::Value(Value::NativeFunction(nf)) => nf.call(args)?,
+            Placeholder::Placeholder(_) => Err(RuntimeError::ValueNotSet),
+            _ => Err(RuntimeError::NotAFunction),
+        }
+    }
 
-    // }
+    pub fn run_call(&mut self, function_index: ValueIndex, result_index: RegisterIndex) -> Result<Option<Value>> {
+	let function = self.last_frame()?.get_value_index(function_index);
+        match function {
+            Placeholder::Value(Value::Object(Object::Closure(closure))) => {
+		todo!()
+            }
+            Placeholder::Value(Value::NativeFunction(nf)) => Rc::new(Closure {
+                function: ClosureType::NativeFunction(nf),
+                captures: vec![],
+                arguments: vec![],
+            })?,
+            Placeholder::Placeholder(_) => Err(RuntimeError::ValueNotSet),
+            _ => Err(RuntimeError::NotAFunction),
+        }	
+	Ok(None)
+    }
+
+    pub fn step(&mut self) -> Result<Option<Value>> {
+        match self.last_frame()?.inside_call {
+            Some((function_index, Some(result_index))) => self.run_call(function_index, result_index),
+            Some((function_index, None)) => self.run_tail_call(function_index),
+            None => {
+                let oc = self
+                    .last_frame()?
+                    .opcode()
+                    .ok_or(RuntimeError::NoMoreOpCodes)?;
+                match oc {
+                    OpCode::Call(function_index, result_target) => todo!(),
+                    OpCode::TailCall(_) => todo!(),
+                    OpCode::DeclareRecursive(_) => todo!(),
+                    OpCode::FillRecursive(_, _) => todo!(),
+                    OpCode::CallArgument(_) => todo!(),
+                    OpCode::Return(_) => todo!(),
+                    OpCode::Jump(_) => todo!(),
+                    OpCode::JumpToPositionIfFalse(_, _) => todo!(),
+                    OpCode::CopyValue(_, _) => todo!(),
+                    OpCode::CloseValue(_) => todo!(),
+                    OpCode::CreateClosure(_, _) => todo!(),
+                    OpCode::CaptureValue(_) => todo!(),
+                    OpCode::Crash => todo!(),
+                    OpCode::InsertNativeFunction(_, _) => todo!(),
+                }
+            }
+        }
+    }
 
     pub fn run_create_closure(
         &mut self,
@@ -122,21 +171,6 @@ impl VM {
         Ok(())
     }
 
-    /// Get up to the specified number of arguments
-    /// The return tuple is the argument vector, and a boolean which is true
-    /// if there are still more arguments to get
-    fn get_function_arguments(&mut self, max_arguments: usize) -> Result<(Vec<Value>, bool)> {
-        let arg_vec = Vec::with_capacity(max_arguments);
-        while let Some(OpCode::CallArgument(arg)) = self.last_frame()?.opcode() {
-            if arg_vec.len() >= max_arguments {
-                return Ok((arg_vec, true));
-            } else {
-                arg_vec.push(arg)
-            }
-        }
-        Ok((arg_vec, false))
-    }
-
     fn call_native_function(
         &mut self,
         native_function: NativeFunction,
@@ -165,45 +199,45 @@ impl VM {
         }
     }
 
-    pub fn step(&mut self) -> Result<Option<Value>> {
-        let oc = self
-            .last_frame()?
-            .opcode()
-            .ok_or(RuntimeError::NoMoreOpCodes)?;
-        match oc {
-            OpCode::Call(r, i) => self.call(r.into(), i.into()).map(|_| None),
-            OpCode::Return(i) => self.vm_return(i.into()),
-            OpCode::CopyValue(from, target) => {
-                self.copy_value(from.into(), target.into()).map(|_| None)
-            }
+    // pub fn step(&mut self) -> Result<Option<Value>> {
+    //     let oc = self
+    //         .last_frame()?
+    //         .opcode()
+    //         .ok_or(RuntimeError::NoMoreOpCodes)?;
+    //     match oc {
+    //         OpCode::Call(r, i) => self.call(r.into(), i.into()).map(|_| None),
+    //         OpCode::Return(i) => self.vm_return(i.into()),
+    //         OpCode::CopyValue(from, target) => {
+    //             self.copy_value(from.into(), target.into()).map(|_| None)
+    //         }
 
-            OpCode::CloseValue(i) => {
-                self.close_value(i.into());
-                Ok(None)
-            }
+    //         OpCode::CloseValue(i) => {
+    //             self.close_value(i.into());
+    //             Ok(None)
+    //         }
 
-            OpCode::TailCall(r) => self.tail_call(r.into()),
-            OpCode::CreateClosure(function_index, return_register) => self
-                .create_closure(function_index.into(), return_register.into())
-                .map(|_| None),
-            OpCode::CallArgument(_) => Err(anyhow!(
-                "Bytecode incorrect. Tried to have a call argument without a previous call"
-            )),
-            OpCode::Jump(position) => self.jump(position.into()).map(|_| None),
-            OpCode::JumpToPositionIfFalse(boolean_register, position) => self
-                .jump_to_position_if_false(boolean_register.into(), position.into())
-                .map(|_| None),
-            OpCode::Crash => Err(anyhow!("CRASH")),
-            OpCode::InsertNativeFunction(native_fn, position) => self
-                .insert_native_function(native_fn, position.into())
-                .map(|_| None),
-            OpCode::CaptureValue(_) => Err(anyhow!(
-                "Bytecode incorrect. Tried to capture a value without a previous closure"
-            )),
-            OpCode::DeclareRecursive(_) => todo!(),
-            OpCode::FillRecursive(_, _) => todo!(),
-        }
-    }
+    //         OpCode::TailCall(r) => self.tail_call(r.into()),
+    //         OpCode::CreateClosure(function_index, return_register) => self
+    //             .create_closure(function_index.into(), return_register.into())
+    //             .map(|_| None),
+    //         OpCode::CallArgument(_) => Err(anyhow!(
+    //             "Bytecode incorrect. Tried to have a call argument without a previous call"
+    //         )),
+    //         OpCode::Jump(position) => self.jump(position.into()).map(|_| None),
+    //         OpCode::JumpToPositionIfFalse(boolean_register, position) => self
+    //             .jump_to_position_if_false(boolean_register.into(), position.into())
+    //             .map(|_| None),
+    //         OpCode::Crash => Err(anyhow!("CRASH")),
+    //         OpCode::InsertNativeFunction(native_fn, position) => self
+    //             .insert_native_function(native_fn, position.into())
+    //             .map(|_| None),
+    //         OpCode::CaptureValue(_) => Err(anyhow!(
+    //             "Bytecode incorrect. Tried to capture a value without a previous closure"
+    //         )),
+    //         OpCode::DeclareRecursive(_) => todo!(),
+    //         OpCode::FillRecursive(_, _) => todo!(),
+    //     }
+    // }
 
     /// Get a mutable reference to a value in the last frame's registers
     fn value_in_last_frame(&mut self, position: usize) -> &mut Value {

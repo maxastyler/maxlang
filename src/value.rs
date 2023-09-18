@@ -10,6 +10,7 @@ use crate::{expression::Literal, opcode::OpCode};
 enum ValueError {
     NotANumber,
     NotAClosure,
+    TooManyArguments,
 }
 
 type Result<Ok> = std::result::Result<Ok, ValueError>;
@@ -29,11 +30,32 @@ pub enum ClosureType {
     NativeFunction(NativeFunction),
 }
 
+impl ClosureType {
+    pub fn arity(&self) -> usize {
+        match self {
+            ClosureType::Function(f) => f.arity,
+            ClosureType::NativeFunction(nf) => nf.arguments(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub function: ClosureType,
     pub captures: Vec<Placeholder>,
     pub arguments: Vec<Value>,
+}
+
+impl Closure {
+    pub fn add_arguments(&self, args: Vec<Value>) -> Result<Closure> {
+        if args.len() + self.arguments.len() > self.function.arity() {
+            Err(ValueError::TooManyArguments)
+        } else {
+            let mut new = self.clone();
+            new.arguments.extend(args);
+            Ok(new)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

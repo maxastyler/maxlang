@@ -1,4 +1,4 @@
-use crate::{expression::Symbol, value::Value};
+use crate::{expression::Symbol, value::Value, vm::RuntimeError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum NativeFunction {
@@ -23,5 +23,9 @@ impl NativeFunction {
             NativeFunction::Difference => todo!(),
             NativeFunction::Multiply => todo!(),
         }
+    }
+
+    pub fn call(&self, args: Vec<Value>) -> std::result::Result<Value, RuntimeError> {
+	Err(RuntimeError::TooManyArguments)
     }
 }
