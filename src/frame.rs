@@ -1,40 +1,120 @@
 use std::{
     cell::RefCell,
     fmt::Debug,
-    iter::repeat,
     ops::{Range, RangeBounds},
     rc::Rc,
 };
 
-use anyhow::{anyhow, Context, Result};
-
 use crate::{
-    opcode::OpCode,
-    value::{Closure, Function, Value},
+    native_function::NativeFunction,
+    opcode::{FunctionIndex, OpCode, RegisterIndex, ValueIndex},
+    value::{Closure, Function, Placeholder, Value},
+    vm::RuntimeError,
 };
 
 pub struct Frame {
     pub pointer: usize,
-    pub register_offset: usize,
+    pub registers: Vec<Placeholder>,
     pub function: Rc<Function>,
+    pub captures: Vec<Value>,
     pub return_position: usize,
 }
+
+type Result<T> = std::result::Result<T, RuntimeError>;
 
 impl<'a> Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
-            "Frame (return_pos: {:?}, pointer: {:?}, depth: {:?}){{\nfunction: {:?}}}",
-            self.return_position, self.pointer, self.register_offset, self.function
+            "Frame (return_pos: {:?}, pointer: {:?}){{\nfunction: {:?}}}",
+            self.return_position, self.pointer, self.function
         ))
     }
 }
 
 impl Frame {
-    pub fn register_range(&self) -> Range<usize> {
-        self.register_offset..self.register_offset + self.function.registers
+    pub fn new_from_closure(closure: Rc<Closure>, return_position: usize) -> Frame {
+        let mut registers = vec![Placeholder::Value(Value::Uninit); closure.function.num_registers];
+        registers.splice(
+            0..closure.function.arity,
+            closure
+                .arguments
+                .iter()
+                .map(|x| Placeholder::Value(x.clone())),
+        );
+        Frame {
+            pointer: 0,
+            registers,
+            function: closure.function,
+            captures: closure.captures.clone(),
+            return_position,
+        }
     }
 
-    pub fn opcode(&self) -> Option<OpCode<u8, u8>> {
+    pub fn register_range(&self) -> Range<usize> {
+        self.function.arity..(self.function.arity + self.function.num_registers)
+    }
+
+    pub fn opcode(&self) -> Option<OpCode> {
         self.function.opcodes.get(self.pointer).cloned()
+    }
+
+    pub fn get_value_index(&self, value_index: ValueIndex) -> Placeholder {
+        match value_index {
+            ValueIndex::Register(reg) => self.registers[reg.0 as usize],
+            ValueIndex::Constant(con) => {
+                Placeholder::Value(self.function.constants[con.0 as usize])
+            }
+            ValueIndex::Capture(cap) => Placeholder::Value(self.captures[cap.0 as usize]),
+        }
+    }
+
+    pub fn run_declare_recursive(&mut self, index: RegisterIndex) {
+        self.registers[index.0 as usize] =
+            Placeholder::Placeholder(Rc::new(RefCell::new(Value::Uninit)));
+        self.pointer += 1;
+    }
+
+    pub fn run_fill_recursive(&mut self, value_index: ValueIndex, register_index: RegisterIndex) {
+        self.registers[register_index.0 as usize] = self.get_value_index(value_index);
+        self.pointer += 1;
+    }
+
+    pub fn run_jump(&mut self, offset: isize) {
+        self.pointer.saturating_add_signed(offset);
+    }
+
+    pub fn run_jump_to_position_if_false(
+        &mut self,
+        check_index: ValueIndex,
+        offset: isize,
+    ) -> Result<()> {
+        let b = match self.get_value_index(check_index).unwrap() {
+            Value::Bool(b) => b,
+            _ => return Err(RuntimeError::NotABoolean),
+        };
+        if b {
+            self.run_jump(offset);
+        }
+        Ok(())
+    }
+
+    pub fn run_copy_value(&mut self, from_index: ValueIndex, to_index: RegisterIndex) {
+        self.registers[to_index.0 as usize] = self.get_value_index(from_index);
+        self.pointer += 1;
+    }
+
+    pub fn run_close_value(&mut self, index: RegisterIndex) {
+        self.registers[index.0 as usize] = Placeholder::Value(Value::Uninit);
+        self.pointer += 1;
+    }
+
+    pub fn run_insert_native_function(
+        &mut self,
+        native_function: NativeFunction,
+        index: RegisterIndex,
+    ) {
+        self.registers[index.0 as usize] =
+            Placeholder::Value(Value::NativeFunction(native_function));
+        self.pointer += 1;
     }
 }

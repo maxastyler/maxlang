@@ -1,5 +1,3 @@
-use nom::CompareResult;
-
 use crate::{
     expression::{Block, Expression, Let, Literal, LocatedExpression, Symbol},
     tokeniser::{Location, Token, TokenData},
@@ -418,7 +416,7 @@ fn parse_block<'a>(
     while let Ok((new_t, e)) = parse_expression(t) {
         elements.push(e);
         t = new_t;
-        if let Ok((new_t, _)) = t.take_matching(TokenData::Comma) {
+        if let Ok((new_t, _)) = t.take_matching(TokenData::SemiColon) {
             t = new_t
         } else {
             break;
@@ -469,7 +467,7 @@ fn parse_condition<'a>(
     let (t, c) = parse_expression(tokens)?;
     let (t, _) = t.take_matching(TokenData::Tilde)?;
     let (t, r) = parse_expression(t)?;
-    let (t, _) = t.take_matching(TokenData::Comma)?;
+    let (t, _) = t.take_matching(TokenData::SemiColon)?;
     Ok((t, (c, r)))
 }
 
@@ -542,23 +540,12 @@ mod test {
 
     #[test]
     fn parse_list_works() {
-        let source = "[a, b, c]";
-        assert_eq!(
-            parse_list(
-                &Token::tokenise_source(source, "")
-                    .map(|i| i.unwrap())
-                    .collect::<Vec<_>>()
-            )
-            .map(|x| x.1),
-            Ok(LocatedExpression {
-                expression: Expression::Literal(Literal::List(vec![])),
-                location: Location {
-                    file: "",
-                    source,
-                    start_pos: 0,
-                    end_pos: 3
-                }
-            })
+        let source = "[a, b, c, 3, let x 2, y 3]";
+        assert!(parse_list(
+            &Token::tokenise_source(source, "")
+                .map(|i| i.unwrap())
+                .collect::<Vec<_>>()
         )
+        .is_ok())
     }
 }

@@ -9,41 +9,27 @@ use std::{
 use crate::{
     frame::Frame,
     native_function::{self, NativeFunction},
-    opcode::OpCode,
-    value::{Closure, Function, Object, Value},
+    opcode::{FunctionIndex, OpCode, RegisterIndex, ValueIndex},
+    value::{Closure, Function, Object, Placeholder, Value},
 };
 
-use anyhow::{anyhow, Context, Result};
-
-#[derive(Default)]
-pub struct Storage {
-    register_storage: Vec<Value>,
-    temporary_storage: Vec<Value>,
-    /// The point where the register is filled up to
-    register_fill_point: usize,
+pub enum RuntimeError {
+    NoMoreOpCodes,
+    NotAFunction,
+    NotABoolean,
+    NoLastFrame,
 }
 
-impl Storage {
-    /// ensure that the storage has slots filled up to the given length, increasing capacity if not
-    fn ensure_filled(&mut self, length: usize) {
-        if self.register_storage.len() < length {
-            self.register_storage
-                .extend(repeat(Value::Uninit).take(length - self.register_storage.len()))
-        }
-    }
-    fn splice<R, I>(&mut self, range: R, replace_with: I)
-    where
-        R: RangeBounds<usize>,
-        I: IntoIterator<Item = Value>,
-    {
-        self.register_storage.splice(range, replace_with);
-    }
+pub enum CallType {
+    Tail,
+    NonTail(RegisterIndex),
 }
+
+type Result<T> = std::result::Result<T, RuntimeError>;
 
 #[derive(Default)]
 pub struct VM {
     pub frames: Vec<Frame>,
-    pub storage: Storage,
 }
 
 impl Debug for VM {
@@ -57,56 +43,140 @@ impl Debug for VM {
 }
 
 impl VM {
-    pub fn create_new_frame(
-        &mut self,
-        closure: Rc<Closure>,
-        starting_register: usize,
-        return_position: usize,
-    ) -> Frame {
-        self.storage
-            .ensure_filled(starting_register + closure.function.registers);
-        for (i, c) in closure.captures.iter().enumerate() {
-            self.storage.register_storage[starting_register + i] = c.clone();
-        }
-
-        Frame {
-            pointer: 0,
-            register_offset: starting_register,
-            function: closure.function.clone(),
-            return_position,
-        }
-    }
-
     pub fn from_bare_function(f: Function) -> Self {
         let closure = Rc::new(Closure {
             function: Rc::new(f),
             captures: vec![],
+            arguments: vec![],
         });
         let mut vm = VM::default();
-        let frame = vm.create_new_frame(closure, 0, 0);
-        vm.frames.push(frame);
+        vm.frames.push(Frame::new_from_closure(closure, 0));
         vm
+    }
+
+    // pub fn step(&mut self) -> Result<Option<Value>> {
+    //     let oc = self
+    //         .last_frame()?
+    //         .opcode()
+    //         .ok_or(RuntimeError::NoMoreOpCodes)?;
+    //     match oc {
+    //         OpCode::Call(function_index, result_target) => {
+    //             self.run_call(function_index, result_target)
+    //         }
+    //         OpCode::TailCall(_) => todo!(),
+    //         OpCode::DeclareRecursive(_) => todo!(),
+    //         OpCode::FillRecursive(_, _) => todo!(),
+    //         OpCode::CallArgument(_) => todo!(),
+    //         OpCode::Return(_) => todo!(),
+    //         OpCode::Jump(_) => todo!(),
+    //         OpCode::JumpToPositionIfFalse(_, _) => todo!(),
+    //         OpCode::CopyValue(_, _) => todo!(),
+    //         OpCode::CloseValue(_) => todo!(),
+    //         OpCode::CreateClosure(_, _) => todo!(),
+    //         OpCode::CaptureValue(_) => todo!(),
+    //         OpCode::Crash => todo!(),
+    //         OpCode::InsertNativeFunction(_, _) => todo!(),
+    //     }
+    // }
+
+    // pub fn run_call(
+    //     &mut self,
+    //     function_index: ValueIndex,
+    //     result_target: RegisterIndex,
+    // ) -> Result<()> {
+
+    // }
+
+    pub fn run_create_closure(
+        &mut self,
+        function_index: FunctionIndex,
+        register: RegisterIndex,
+    ) -> Result<()> {
+        let frame = self.last_frame_mut()?;
+        let func = frame.function.functions[function_index.0 as usize].clone();
+        let mut captures: Vec<_> = Vec::with_capacity(func.num_captures);
+
+        frame.pointer += 1;
+
+        while let Some(OpCode::CaptureValue(value_index)) = frame.opcode() {
+            frame.pointer += 1;
+            captures.push(frame.get_value_index(value_index));
+        }
+        debug_assert!(captures.len() == func.num_captures);
+
+        frame.registers[register.0 as usize] =
+            Placeholder::Value(Value::Object(Object::Closure(Rc::new(Closure {
+                function: func,
+                captures,
+                arguments: Vec::with_capacity(func.arity),
+            }))));
+        Ok(())
+    }
+
+    fn run_return(&mut self, return_value_index: ValueIndex) -> Result<()> {
+        let value = self.last_frame()?.get_value_index(return_value_index);
+        let return_pos = self.last_frame()?.return_position;
+        // TODO: will this break garbage collection? No root to value inbetween these calls
+        self.pop_frame();
+        self.last_frame_mut()?.registers[return_pos] = value;
+        Ok(())
+    }
+
+    /// Get up to the specified number of arguments
+    /// The return tuple is the argument vector, and a boolean which is true
+    /// if there are still more arguments to get
+    fn get_function_arguments(&mut self, max_arguments: usize) -> Result<(Vec<Value>, bool)> {
+        let arg_vec = Vec::with_capacity(max_arguments);
+        while let Some(OpCode::CallArgument(arg)) = self.last_frame()?.opcode() {
+            if arg_vec.len() >= max_arguments {
+                return Ok((arg_vec, true));
+            } else {
+                arg_vec.push(arg)
+            }
+        }
+        Ok((arg_vec, false))
+    }
+
+    fn call_native_function(
+        &mut self,
+        native_function: NativeFunction,
+        call_type: CallType,
+    ) -> Result<()> {
+        let result_position = match call_type {
+            CallType::Tail => self.last_frame()?.return_position,
+            CallType::NonTail(return_position) => return_position.0 as usize,
+        };
+        self.pop_frame();
+    }
+
+    fn run_call(&mut self, call_type: CallType, closure_index: ValueIndex) -> Result<()> {
+        self.increase_pointer(1);
+        match self.last_frame()?.get_value_index(closure_index) {
+            Placeholder::Value(Value::NativeFunction(nf)) => {
+                self.call_native_function(nf, call_type)
+            }
+            Placeholder::Value(Value::Object(Object::Closure(closure))) => todo!(),
+            _ => Err(RuntimeError::NotAFunction),
+        }
     }
 
     pub fn step(&mut self) -> Result<Option<Value>> {
         let oc = self
             .last_frame()?
             .opcode()
-            .context(format!("Could not get value for opcode"))?;
+            .ok_or(RuntimeError::NoMoreOpCodes)?;
         match oc {
             OpCode::Call(r, i) => self.call(r.into(), i.into()).map(|_| None),
             OpCode::Return(i) => self.vm_return(i.into()),
             OpCode::CopyValue(from, target) => {
                 self.copy_value(from.into(), target.into()).map(|_| None)
             }
-            OpCode::LoadConstant(constant_index, target) => {
-                self.load_constant(constant_index.into(), target.into());
-                Ok(None)
-            }
+
             OpCode::CloseValue(i) => {
                 self.close_value(i.into());
                 Ok(None)
             }
+
             OpCode::TailCall(r) => self.tail_call(r.into()),
             OpCode::CreateClosure(function_index, return_register) => self
                 .create_closure(function_index.into(), return_register.into())
@@ -125,6 +195,8 @@ impl VM {
             OpCode::CaptureValue(_) => Err(anyhow!(
                 "Bytecode incorrect. Tried to capture a value without a previous closure"
             )),
+            OpCode::DeclareRecursive(_) => todo!(),
+            OpCode::FillRecursive(_, _) => todo!(),
         }
     }
 
@@ -140,16 +212,15 @@ impl VM {
         Ok(())
     }
 
-    fn jump(&mut self, position: usize) -> Result<()> {
-        self.last_frame_mut()?.pointer = position;
+    fn jump(&mut self, position: i16) -> Result<()> {
+        self.last_frame_mut()?.pointer = self
+            .last_frame_mut()?
+            .pointer
+            .saturating_add_signed(position as isize);
         Ok(())
     }
 
-    fn jump_to_position_if_false(
-        &mut self,
-        boolean_register: usize,
-        position: usize,
-    ) -> Result<()> {
+    fn jump_to_position_if_false(&mut self, boolean_register: usize, position: i16) -> Result<()> {
         match self.value_in_last_frame(boolean_register) {
             Value::Bool(b) => {
                 if *b {
@@ -161,7 +232,7 @@ impl VM {
                     self.jump(position)
                 }
             }
-            _ => Err(anyhow!("The given register didn't contain a boolean")),
+            _ => Err(RuntimeError::NotABoolean),
         }
     }
 
@@ -187,7 +258,7 @@ impl VM {
                 )?;
                 Ok(None)
             }
-            x => Err(anyhow!("Not a function: {:?}", x)),
+            x => Err(RuntimeError::NotAFunction),
         }
     }
 
@@ -195,7 +266,8 @@ impl VM {
         let function = self.last_frame()?.function.functions[function_index].clone();
         let mut closure = Closure {
             function: function.clone(),
-            captures: Vec::with_capacity(function.capture_offset),
+            captures: Vec::new(),
+            arguments: Vec::new(),
         };
         self.increase_pointer(1);
         loop {
@@ -225,7 +297,7 @@ impl VM {
         debug_assert!(self.storage.temporary_storage.len() == closure.function.arity);
         let frame = self.frames.last_mut().unwrap();
         let storage = &mut self.storage;
-        storage.ensure_filled(frame.register_offset + closure.function.registers);
+        storage.ensure_filled(frame.register_offset + closure.function.num_registers);
         for (i, c) in closure.captures.iter().enumerate() {
             storage.register_storage[frame.register_offset + i] = c.clone();
         }
@@ -257,7 +329,7 @@ impl VM {
             let capture_offset = closure.function.capture_offset;
             let mut index = capture_offset;
             let register_offset =
-                self.last_frame()?.register_offset + self.last_frame()?.function.registers;
+                self.last_frame()?.register_offset + self.last_frame()?.function.num_registers;
             let mut new_frame = self.create_new_frame(closure, register_offset, result_slot);
             loop {
                 match self.last_frame()?.opcode() {
@@ -300,7 +372,11 @@ impl VM {
     }
 
     fn call(&mut self, function_register: usize, result_slot: usize) -> Result<()> {
-        match self.value_in_last_frame(function_register).clone() {
+        match self
+            .value_in_last_frame(function_register)
+            .unwrap_recursive()
+            .clone()
+        {
             Value::NativeFunction(nf) => {
                 let value = self.call_native_function(nf)?;
                 *self.value_in_last_frame(result_slot) = value;
@@ -308,12 +384,7 @@ impl VM {
             Value::Object(Object::Closure(closure)) => {
                 self.create_and_push_new_frame(closure, result_slot, false)?
             }
-            x => {
-                return Err(anyhow!(
-                    "Tried to call something that's not a function: {:?}",
-                    x
-                ))
-            }
+            x => return Err(RuntimeError::NotAFunction),
         };
         Ok(())
     }
@@ -360,12 +431,10 @@ impl VM {
     }
 
     fn last_frame_mut(&mut self) -> Result<&mut Frame> {
-        self.frames
-            .last_mut()
-            .context("Could not get last frame as mutable reference")
+        self.frames.last_mut().ok_or(RuntimeError::NoLastFrame)
     }
 
     fn last_frame(&self) -> Result<&Frame> {
-        self.frames.last().context("Could not get last frame")
+        self.frames.last().ok_or(RuntimeError::NoLastFrame)
     }
 }
