@@ -143,7 +143,12 @@ impl VM {
         call_type: CallType,
     ) -> Result<()> {
         let result_position = match call_type {
-            CallType::Tail => self.last_frame()?.return_position,
+            CallType::Tail => {
+                let ret_pos = self.last_frame()?.return_position;
+                let args = self.get_function_arguments(native_function.arguments)?;
+                self.pop_frame();
+                ret_pos
+            }
             CallType::NonTail(return_position) => return_position.0 as usize,
         };
         self.pop_frame();
