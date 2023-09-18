@@ -24,9 +24,14 @@ pub struct Function {
     pub num_registers: usize,
 }
 
+pub enum ClosureType {
+    Function(Rc<Function>),
+    NativeFunction(NativeFunction),
+}
+
 #[derive(Debug, Clone)]
 pub struct Closure {
-    pub function: Rc<Function>,
+    pub function: ClosureType,
     pub captures: Vec<Placeholder>,
     pub arguments: Vec<Value>,
 }

@@ -14,4 +14,14 @@ impl NativeFunction {
             _ => None,
         }
     }
+
+    /// The number of arguments
+    pub fn arguments(&self) -> usize {
+        match self {
+            NativeFunction::LessThan => todo!(),
+            NativeFunction::Sum => todo!(),
+            NativeFunction::Difference => todo!(),
+            NativeFunction::Multiply => todo!(),
+        }
+    }
 }
