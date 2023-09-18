@@ -9,11 +9,12 @@ use crate::{
     native_function::NativeFunction,
     opcode::{FunctionIndex, OpCode, RegisterIndex, ValueIndex},
     value::{Closure, Function, Placeholder, Value},
-    vm::RuntimeError,
+    vm::{CallType, RuntimeError},
 };
 
 pub struct Frame {
     pub pointer: usize,
+    pub inside_call: Option<(ValueIndex, Option<RegisterIndex>)>,
     pub registers: Vec<Placeholder>,
     pub function: Rc<Function>,
     pub captures: Vec<Value>,
@@ -116,5 +117,17 @@ impl Frame {
         self.registers[index.0 as usize] =
             Placeholder::Value(Value::NativeFunction(native_function));
         self.pointer += 1;
+    }
+
+    pub fn run_call(&mut self, call_type: CallType, function_index: ValueIndex) {
+        match call_type {
+            CallType::Tail => {
+                self.inside_call = Some((function_index, None));
+            }
+            CallType::NonTail(result_index) => {
+                self.inside_call = Some((function_index, Some(result_index)));
+            }
+        };
+	
     }
 }
