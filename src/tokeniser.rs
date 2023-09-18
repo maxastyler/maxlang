@@ -47,6 +47,7 @@ pub enum TokenData<'a> {
     CloseAngleBracket,
     OpenCurlyBracket,
     CloseCurlyBracket,
+    SemiColon,
     OpenParen,
     CloseParen,
     Dollar,
@@ -141,6 +142,7 @@ impl<'a> Token<'a> {
             ":" => Some(TokenData::Colon),
             "!" => Some(TokenData::ExclamationMark),
             "~" => Some(TokenData::Tilde),
+            ";" => Some(TokenData::SemiColon),
             _ => None,
         }
     }

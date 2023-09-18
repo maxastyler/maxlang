@@ -1,10 +1,19 @@
-use anyhow::{anyhow, Context, Result};
 use std::{collections::HashMap, iter::repeat, rc::Rc};
 
 use crate::{
-    expression::{Expression, Literal, Symbol},
-    opcode::OpCode,
+    expression::{Block, Expression, Let, Literal, LocatedExpression, Symbol},
+    native_function::NativeFunction,
+    opcode::{CaptureIndex, ConstantIndex, FunctionIndex, OpCode, RegisterIndex, ValueIndex},
+    value::{Function, Placeholder, Value},
 };
+
+#[derive(Debug)]
+pub enum CompilerError {
+    NoFrames,
+    NoElementsInLet,
+}
+
+type Result<T> = std::result::Result<T, CompilerError>;
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Local {
@@ -16,38 +25,14 @@ pub enum Local {
     None,
 }
 
-#[derive(PartialEq, Debug, Clone)]
-pub struct LocalIndex(usize);
-#[derive(PartialEq, Debug, Clone)]
-pub struct CaptureIndex(usize);
-#[derive(PartialEq, Debug, Clone)]
-pub struct ConstIndex(usize);
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum FrameIndex {
-    LocalIndex(LocalIndex),
-    CaptureIndex(CaptureIndex),
-    ConstIndex(ConstIndex),
-}
-
-#[derive(Debug)]
-pub struct CompilerFunction {
-    pub opcodes: Vec<OpCode<FrameIndex>>,
-    pub constants: Vec<Value>,
-    pub functions: Vec<Rc<CompilerFunction>>,
-    pub arity: usize,
-    pub captures: usize,
-    pub registers: usize,
-}
-
 #[derive(Debug)]
 pub struct CompilerFrame {
-    pub names: HashMap<(usize, Symbol), FrameIndex>,
+    pub names: HashMap<(usize, Symbol), ValueIndex>,
     pub locals: Vec<Local>,
     /// A triple of symbol, depth, register
-    pub captures: Vec<FrameIndex>,
+    pub captures: Vec<ValueIndex>,
     pub depth: usize,
-    pub opcodes: Vec<OpCode<FrameIndex>>,
+    pub opcodes: Vec<OpCode>,
     pub constants: Vec<Value>,
     pub functions: Vec<Rc<Function>>,
 }
@@ -55,25 +40,12 @@ pub struct CompilerFrame {
 impl CompilerFrame {
     fn to_function(self, arity: usize) -> Function {
         Function {
-            opcodes: self
-                .opcodes
-                .iter()
-                .map(|o| {
-                    o.convert(
-                        &mut |v_index| v_index as u8,
-                        &mut |ref_index| match ref_index {
-                            FrameIndex::LocalIndex(LocalIndex(l)) => l + self.captures.len(),
-                            FrameIndex::CaptureIndex(CaptureIndex(c)) => c,
-                        } as u8,
-                    )
-                })
-                .collect(),
-
+            opcodes: self.opcodes,
             constants: self.constants,
             functions: self.functions,
             arity,
-            capture_offset: self.captures.len(),
-            registers: self.locals.len() + self.captures.len(),
+            num_captures: self.captures.len(),
+            num_registers: self.locals.len(),
         }
     }
 
@@ -86,7 +58,7 @@ impl CompilerFrame {
         self.names.retain(|(depth, _), _| *depth <= self.depth);
     }
 
-    fn assign_name(&mut self, name: &Symbol, register: FrameIndex) {
+    fn assign_name(&mut self, name: &Symbol, register: ValueIndex) {
         self.names.insert((self.depth, name.clone()), register);
     }
 
@@ -98,25 +70,27 @@ impl CompilerFrame {
                     if !self
                         .names
                         .iter()
-                        .any(|(_, r)| *r == FrameIndex::LocalIndex(LocalIndex(i))) =>
+                        .any(|(_, r)| *r == ValueIndex::Register(RegisterIndex(i as u8))) =>
                 {
                     *l = Local::None;
-                    self.opcodes.push(OpCode::CloseValue(i))
+                    // self.opcodes.push(OpCode::CloseValue(i))
                 }
+
                 _ => (),
             }
         }
     }
 
+    /// Create a new compiler frame with the given arguments and depth
     pub fn new(arguments: &Vec<Symbol>, depth: usize) -> Self {
         CompilerFrame {
             locals: repeat(Local::ToClear).take(arguments.len()).collect(),
-            names: HashMap::from_iter(
-                arguments
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| ((depth, s.clone()), FrameIndex::LocalIndex(LocalIndex(i)))),
-            ),
+            names: HashMap::from_iter(arguments.iter().enumerate().map(|(i, s)| {
+                (
+                    (depth, s.clone()),
+                    ValueIndex::Register(RegisterIndex(i as u8)),
+                )
+            })),
             captures: vec![],
             depth: depth + 1,
             opcodes: vec![],
@@ -126,7 +100,7 @@ impl CompilerFrame {
     }
 
     /// Finds the symbol with the same name at the greatest depth <= self.depth,
-    fn find_local(&self, symbol: &Symbol) -> Option<FrameIndex> {
+    fn find_local(&self, symbol: &Symbol) -> Option<ValueIndex> {
         self.names
             .iter()
             .filter(|((d, s), _)| {
@@ -139,7 +113,7 @@ impl CompilerFrame {
 
     /// If the capture index already exists in captures, return its position,
     /// otherwise create a new one
-    fn resolve_capture(&mut self, index: FrameIndex) -> CaptureIndex {
+    fn resolve_capture(&mut self, index: ValueIndex) -> CaptureIndex {
         CaptureIndex(
             self.captures
                 .iter()
@@ -147,47 +121,52 @@ impl CompilerFrame {
                 .unwrap_or_else(|| {
                     self.captures.push(index);
                     self.captures.len() - 1
-                }),
+                }) as u8,
         )
     }
 
     /// Returns a tuple of the index of the next free register and a mutable reference to it
-    fn reserve_next_free_register(&mut self) -> (LocalIndex, &mut Local) {
+    fn reserve_next_free_register(&mut self) -> (RegisterIndex, &mut Local) {
         let index = self.locals.iter().position(|l| matches!(l, Local::None));
 
         match index {
             Some(i) => {
                 self.locals[i] = Local::Reserved;
-                self.locals.get_mut(i).map(|r| (LocalIndex(i), r)).unwrap()
+                self.locals
+                    .get_mut(i)
+                    .map(|r| (RegisterIndex(i as u8), r))
+                    .unwrap()
             }
             None => {
                 self.locals.push(Local::Reserved);
                 let index = self.locals.len() - 1;
                 self.locals
                     .last_mut()
-                    .map(|l| (LocalIndex(index), l))
+                    .map(|l| (RegisterIndex(index as u8), l))
                     .unwrap()
             }
         }
     }
 
-    fn add_literal(&mut self, target_register: LocalIndex, literal: &Literal) {
+    fn add_literal(&mut self, literal: &Literal) -> ConstantIndex {
         self.constants.push((literal.clone()).into());
-
-        self.opcodes.push(OpCode::LoadConstant(
-            self.constants.len() - 1,
-            FrameIndex::LocalIndex(target_register),
-        ));
+        ConstantIndex((self.constants.len() - 1) as u8)
     }
 
     fn compile_literal(
         &mut self,
-        position: Option<LocalIndex>,
+        position: Option<RegisterIndex>,
         literal: &Literal,
-    ) -> Result<LocalIndex> {
-        let pos = position.unwrap_or_else(|| self.reserve_next_free_register().0);
-        self.add_literal(pos.clone(), literal);
-        Ok(pos)
+    ) -> Result<ValueIndex> {
+        let lit_pos = self.add_literal(literal);
+        Ok(match position {
+            Some(p) => {
+                self.opcodes
+                    .push(OpCode::CopyValue(ValueIndex::Constant(lit_pos), p.clone()));
+                ValueIndex::Register(p)
+            }
+            None => ValueIndex::Constant(lit_pos),
+        })
     }
 }
 
@@ -201,16 +180,16 @@ impl Compiler {
         self.frames
             .last_mut()
             .map(|f| f.clear_unused_locals())
-            .context("No last frame")
+            .ok_or(CompilerError::NoFrames)
     }
 
     /// Set the local at the given index to ToClear
-    fn drop_register(&mut self, index: FrameIndex) -> Result<()> {
+    fn drop_register(&mut self, index: ValueIndex) -> Result<()> {
         match index {
-            FrameIndex::LocalIndex(index) => {
+            ValueIndex::Register(RegisterIndex(i)) => {
                 let ls = &mut self.frames.last_mut().unwrap().locals;
-                if ls[index.0] == Local::Reserved {
-                    ls[index.0] = Local::ToClear;
+                if ls[i as usize] == Local::Reserved {
+                    ls[i as usize] = Local::ToClear;
                 }
             }
             _ => (),
@@ -218,18 +197,18 @@ impl Compiler {
         Ok(())
     }
 
-    fn reserve_next_free_register(&mut self) -> Result<(LocalIndex, &mut Local)> {
+    fn reserve_next_free_register(&mut self) -> Result<(RegisterIndex, &mut Local)> {
         self.frames
             .last_mut()
-            .context("No last frame")
+            .ok_or(CompilerError::NoFrames)
             .map(|f| f.reserve_next_free_register())
     }
 
-    fn find_local_symbol(&self, frame_index: usize, symbol: &Symbol) -> Option<FrameIndex> {
+    fn find_local_symbol(&self, frame_index: usize, symbol: &Symbol) -> Option<ValueIndex> {
         self.frames.get(frame_index)?.find_local(symbol)
     }
 
-    fn push_opcode(&mut self, opcode: OpCode<usize, FrameIndex>) -> Result<usize> {
+    fn push_opcode(&mut self, opcode: OpCode) -> Result<usize> {
         self.frames.last_mut().unwrap().opcodes.push(opcode);
         Ok(self.frames.last().unwrap().opcodes.len() - 1)
     }
@@ -242,14 +221,14 @@ impl Compiler {
         self.frames.last_mut().unwrap().reduce_scope()
     }
 
-    fn assign_name(&mut self, symbol: &Symbol, register: FrameIndex) -> Result<()> {
+    fn assign_name(&mut self, symbol: &Symbol, register: ValueIndex) -> Result<()> {
         self.frames
             .last_mut()
             .map(|f| f.assign_name(symbol, register))
-            .context("Could not get last frame")
+            .ok_or(CompilerError::NoFrames)
     }
 
-    fn find_nonlocal_symbol(&mut self, frame: usize, symbol: &Symbol) -> Option<FrameIndex> {
+    fn find_nonlocal_symbol(&mut self, frame: usize, symbol: &Symbol) -> Option<ValueIndex> {
         if frame == 0 {
             None
         } else {
@@ -257,14 +236,14 @@ impl Compiler {
             self.find_local_symbol(parent_index, symbol)
                 .or_else(|| self.find_nonlocal_symbol(parent_index, symbol))
                 .and_then(|i| {
-                    Some(FrameIndex::CaptureIndex(
+                    Some(ValueIndex::Capture(
                         self.frames.get_mut(frame)?.resolve_capture(i),
                     ))
                 })
         }
     }
 
-    fn resolve_symbol(&mut self, symbol: &Symbol) -> Option<FrameIndex> {
+    fn resolve_symbol(&mut self, symbol: &Symbol) -> Option<ValueIndex> {
         let last_frame_index = self.frames.len() - 1;
         self.find_local_symbol(last_frame_index, symbol)
             .or_else(|| self.find_nonlocal_symbol(last_frame_index, symbol))
@@ -272,63 +251,121 @@ impl Compiler {
 
     fn compile_literal(
         &mut self,
-        position: Option<LocalIndex>,
+        position: Option<RegisterIndex>,
         literal: &Literal,
-    ) -> Result<FrameIndex> {
+    ) -> Result<ValueIndex> {
         self.frames
             .last_mut()
             .unwrap()
             .compile_literal(position, literal)
-            .map(|l| FrameIndex::LocalIndex(l))
+    }
+
+    fn resolve_native_symbol(&mut self, symbol: &Symbol) -> Result<RegisterIndex> {
+        todo!()
     }
 
     fn compile_symbol(
         &mut self,
-        position: Option<LocalIndex>,
+        position: Option<RegisterIndex>,
         symbol: &Symbol,
-    ) -> Result<FrameIndex> {
+    ) -> Result<ValueIndex> {
         if let Some(i) = self.resolve_symbol(symbol) {
+            // This symbol is declared in scope.
+            // If position is not None, and is not equal to position i, emit a copy
             match position {
-                Some(p) => match i.clone() {
-                    FrameIndex::LocalIndex(l) if l == p => Ok(i),
-                    x => {
-                        self.push_opcode(OpCode::CopyValue(x, FrameIndex::LocalIndex(p.clone())))?;
-                        Ok(FrameIndex::LocalIndex(p))
-                    }
-                },
+                Some(p) if i == ValueIndex::Register(p.clone()) => Ok(i),
+                Some(p) => {
+                    self.push_opcode(OpCode::CopyValue(i.clone(), p))?;
+                    Ok(i)
+                }
                 None => Ok(i),
             }
-        } else if let Some(fun) = NativeFunction::resolve_symbol(symbol) {
-            let result_pos =
-                position.unwrap_or_else(|| self.reserve_next_free_register().unwrap().0);
-            self.push_opcode(OpCode::InsertNativeFunction(
-                fun,
-                FrameIndex::LocalIndex(result_pos.clone()),
-            ))?;
-            Ok(FrameIndex::LocalIndex(result_pos))
         } else {
-            Err(anyhow!("Could not resolve symbol: {:?}", symbol))
+            Ok(ValueIndex::Register(self.resolve_native_symbol(symbol)?))
         }
     }
 
-    fn compile_assign(
+    fn declare_recursive_symbol(
         &mut self,
-        position: Option<LocalIndex>,
+        position: Option<RegisterIndex>,
         symbol: &Symbol,
-        expression: &Expression,
+    ) -> RegisterIndex {
+        let i = position.unwrap_or_else(|| self.reserve_next_free_register().unwrap().0);
+        self.push_opcode(OpCode::DeclareRecursive(i.clone()))
+            .unwrap();
+        self.assign_name(symbol, ValueIndex::Register(i.clone()))
+            .unwrap();
+        i
+    }
+
+    fn compile_recursive_let<'a>(
+        &mut self,
+        position: Option<RegisterIndex>,
+        pairs: &Vec<(Symbol, LocatedExpression<'a>)>,
         tail_position: bool,
-    ) -> Result<Option<FrameIndex>> {
-        match self.compile_expression(position, expression, tail_position)? {
-            Some(p) => {
-                self.assign_name(symbol, p.clone())?;
-                Ok(Some(p))
+    ) -> Result<Option<ValueIndex>> {
+        let ((last_symbol, last_exp), ignored) =
+            pairs.split_last().ok_or(CompilerError::NoElementsInLet)?;
+        let ignored_pointers: Vec<_> = ignored
+            .iter()
+            .map(|(s, _)| self.declare_recursive_symbol(None, s))
+            .collect();
+        let last_pointer = self.declare_recursive_symbol(position, last_symbol);
+        for (p, (s, e)) in ignored_pointers.into_iter().zip(ignored) {
+            let pos = self.compile_expression(None, &e, false)?.unwrap();
+            self.push_opcode(OpCode::FillRecursive(pos, p)).unwrap();
+            self.clear_unused_locals()?;
+        }
+        if let Some(p) = self.compile_expression(None, last_exp, tail_position)? {
+            self.push_opcode(OpCode::FillRecursive(p.clone(), last_pointer))?;
+            Ok(Some(p))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn compile_non_recursive_let<'a>(
+        &mut self,
+        position: Option<RegisterIndex>,
+        pairs: &Vec<(Symbol, LocatedExpression<'a>)>,
+        tail_position: bool,
+    ) -> Result<Option<ValueIndex>> {
+        let ((last_symbol, last_expression), ignored) =
+            pairs.split_last().ok_or(CompilerError::NoElementsInLet)?;
+        for (symbol, exp) in ignored {
+            match self.compile_expression(None, exp, false)? {
+                Some(i) => self.assign_name(symbol, i.clone())?,
+                None => unreachable!(),
+            }
+        }
+        match self.compile_expression(position, last_expression, tail_position)? {
+            Some(i) => {
+                self.assign_name(last_symbol, i.clone()).unwrap();
+                Ok(Some(i))
             }
             None => Ok(None),
         }
     }
 
+    fn compile_let<'a>(
+        &mut self,
+        recursive: bool,
+        position: Option<RegisterIndex>,
+        pairs: &Vec<(Symbol, LocatedExpression<'a>)>,
+        tail_position: bool,
+    ) -> Result<Option<ValueIndex>> {
+        if recursive {
+            self.compile_recursive_let(position, pairs, tail_position)
+        } else {
+            self.compile_non_recursive_let(position, pairs, tail_position)
+        }
+    }
+
     /// Compile a Vec of expressions, and discard all their results
-    fn compile_and_ignore_expressions(&mut self, expressions: &Vec<Expression>) -> Result<()> {
+    fn compile_and_ignore_expressions<'a>(
+        &mut self,
+        expressions: &Vec<LocatedExpression<'a>>,
+    ) -> Result<()> {
         for expression in expressions {
             let index = self.compile_expression(None, expression, false)?.unwrap();
             self.drop_register(index)?;
@@ -337,27 +374,33 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_block(
+    fn compile_block<'a>(
         &mut self,
-        position: Option<LocalIndex>,
-        ignored: &Vec<Expression>,
-        result: &Expression,
+        scope_introducing: bool,
+        position: Option<RegisterIndex>,
+        ignored: &Vec<LocatedExpression<'a>>,
+        result: &LocatedExpression<'a>,
         tail_position: bool,
-    ) -> Result<Option<FrameIndex>> {
-        self.increase_scope();
+    ) -> Result<Option<ValueIndex>> {
+        if scope_introducing {
+            self.increase_scope();
+        }
+
         self.compile_and_ignore_expressions(ignored)?;
         let res = self.compile_expression(position, result, tail_position);
-        self.reduce_scope();
+        if scope_introducing {
+            self.reduce_scope();
+        }
         res
     }
 
     fn compile_call(
         &mut self,
-        position: Option<LocalIndex>,
-        function: &Expression,
-        arguments: &Vec<Expression>,
+        position: Option<RegisterIndex>,
+        function: &LocatedExpression,
+        arguments: &Vec<LocatedExpression>,
         tail_position: bool,
-    ) -> Result<Option<FrameIndex>> {
+    ) -> Result<Option<ValueIndex>> {
         let function_index = self.compile_expression(None, function, false)?.unwrap();
         let mut arg_indices = vec![];
         for arg in arguments {
@@ -373,10 +416,7 @@ impl Compiler {
         } else {
             let result_pos =
                 position.unwrap_or_else(|| self.reserve_next_free_register().unwrap().0);
-            self.push_opcode(OpCode::Call(
-                function_index.clone(),
-                FrameIndex::LocalIndex(result_pos.clone()),
-            ))?;
+            self.push_opcode(OpCode::Call(function_index.clone(), result_pos.clone()))?;
             for i in arg_indices.iter() {
                 self.push_opcode(OpCode::CallArgument(i.clone()))?;
             }
@@ -385,16 +425,16 @@ impl Compiler {
                 self.drop_register(i)?;
             }
             self.clear_unused_locals()?;
-            Ok(Some(FrameIndex::LocalIndex(result_pos)))
+            Ok(Some(ValueIndex::Register(result_pos)))
         }
     }
 
-    fn compile_function(
+    fn compile_function<'a>(
         &mut self,
-        position: Option<LocalIndex>,
+        position: Option<RegisterIndex>,
         args: &Vec<Symbol>,
-        body: &Expression,
-    ) -> Result<FrameIndex> {
+        body: &LocatedExpression<'a>,
+    ) -> Result<ValueIndex> {
         self.frames.push(CompilerFrame::new(
             args,
             self.frames.last().unwrap().depth + 1,
@@ -410,25 +450,25 @@ impl Compiler {
         frame
             .functions
             .push(Rc::new(new_frame.to_function(args.len())));
-        let function_index = frame.functions.len() - 1;
+        let function_index = (frame.functions.len() - 1) as u8;
         let closure_index = position.unwrap_or_else(|| frame.reserve_next_free_register().0);
         frame.opcodes.push(OpCode::CreateClosure(
-            function_index,
-            FrameIndex::LocalIndex(closure_index.clone()),
+            FunctionIndex(function_index),
+            closure_index.clone(),
         ));
         captures
             .into_iter()
             .for_each(|c| frame.opcodes.push(OpCode::CaptureValue(c)));
-        Ok(FrameIndex::LocalIndex(closure_index))
+        Ok(ValueIndex::Register(closure_index))
     }
 
     fn compile_condition(
         &mut self,
-        position: Option<LocalIndex>,
-        clauses: &Vec<(Expression, Expression)>,
-        otherwise: &Expression,
+        position: Option<RegisterIndex>,
+        clauses: &Vec<(LocatedExpression, LocatedExpression)>,
+        otherwise: &LocatedExpression,
         tail_position: bool,
-    ) -> Result<Option<FrameIndex>> {
+    ) -> Result<Option<ValueIndex>> {
         self.increase_scope();
         let result_pos = position.unwrap_or_else(|| self.reserve_next_free_register().unwrap().0);
         let mut jump_end_pos = vec![];
@@ -445,7 +485,7 @@ impl Compiler {
             jump_end_pos.push(self.push_opcode(OpCode::Crash)?);
             self.frames.last_mut().unwrap().opcodes[prev_op_pos] = OpCode::JumpToPositionIfFalse(
                 clause_index,
-                self.frames.last().unwrap().opcodes.len(),
+                (self.frames.last().unwrap().opcodes.len() - prev_op_pos) as i16,
             )
         }
         self.compile_expression(Some(result_pos.clone()), otherwise, tail_position)?;
@@ -454,39 +494,47 @@ impl Compiler {
         // patch in all of the jumps after the expressions
         for p in jump_end_pos {
             self.frames.last_mut().unwrap().opcodes[p] =
-                OpCode::Jump(self.frames.last().unwrap().opcodes.len())
+                OpCode::Jump((self.frames.last().unwrap().opcodes.len() - p) as i16)
         }
         if tail_position {
             Ok(None)
         } else {
-            Ok(Some(FrameIndex::LocalIndex(result_pos)))
+            Ok(Some(ValueIndex::Register(result_pos)))
         }
     }
 
-    pub fn compile_expression(
+    pub fn compile_expression<'a>(
         &mut self,
-        position: Option<LocalIndex>,
-        expression: &Expression,
+        position: Option<RegisterIndex>,
+        expression: &LocatedExpression<'a>,
         tail_position: bool,
-    ) -> Result<Option<FrameIndex>> {
-        let expression_result = match expression {
+    ) -> Result<Option<ValueIndex>> {
+        let expression_result = match &expression.expression {
             Expression::Condition(clauses, otherwise) => {
-                self.compile_condition(position, clauses, otherwise, tail_position)?
+                self.compile_condition(position, &clauses, otherwise.as_ref(), tail_position)?
             }
             Expression::Call(function, arguments) => {
-                self.compile_call(position, function, arguments, tail_position)?
+                self.compile_call(position, function.as_ref(), &arguments, tail_position)?
             }
-            Expression::Assign(symbol, expression) => {
-                self.compile_assign(position, symbol, expression, tail_position)?
+            Expression::Let(Let { recursive, pairs }) => {
+                self.compile_let(*recursive, position, pairs, tail_position)?
             }
             Expression::Function(arguments, body) => {
-                Some(self.compile_function(position, arguments, body)?)
+                Some(self.compile_function(position, &arguments, body.as_ref())?)
             }
-            Expression::Block(ignored, result) => {
-                self.compile_block(position, ignored, result, tail_position)?
-            }
-            Expression::Literal(literal) => Some(self.compile_literal(position, literal)?),
-            Expression::Symbol(symbol) => Some(self.compile_symbol(position, symbol)?),
+            Expression::Block(Block {
+                scope_introducing,
+                ignored,
+                last,
+            }) => self.compile_block(
+                *scope_introducing,
+                position,
+                &ignored,
+                last.as_ref(),
+                tail_position,
+            )?,
+            Expression::Literal(literal) => Some(self.compile_literal(position, &literal)?),
+            Expression::Symbol(symbol) => Some(self.compile_symbol(position, &symbol)?),
         };
         Ok(match expression_result {
             Some(index) if tail_position => {
@@ -512,7 +560,7 @@ impl Compiler {
 #[cfg(test)]
 mod tests {
     use super::Compiler;
-    use crate::parser::parse_program;
+
     // #[test]
     // fn test_compiler_is_working() {
     //     let (s, e) = parse_program(

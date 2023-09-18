@@ -19,7 +19,7 @@ A dict is defined as <a: b, c: d>
 {} <- introduces a new scope
 () <- doesn't introduce a new scope
 The result of these blocks is either the last value, or nil if empty
-Expressions are separated inside the blocks with ,:
+Expressions are separated inside the blocks with ;:
 
 ** Assignment:
 A value can be assigned with "let":

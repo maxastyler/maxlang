@@ -2,75 +2,85 @@ use std::fmt::Debug;
 
 use crate::native_function::NativeFunction;
 
-type VecOffset = i8;
-type VecIndex = u8;
+pub type VecOffset = i16;
+pub type VecIndex = u8;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum OpCode<RegisterIndex> {
+pub struct RegisterIndex(pub VecIndex);
+
+impl From<RegisterIndex> for usize {
+    fn from(value: RegisterIndex) -> Self {
+        value.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstantIndex(pub VecIndex);
+
+impl From<ConstantIndex> for usize {
+    fn from(value: ConstantIndex) -> Self {
+        value.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureIndex(pub VecIndex);
+
+impl From<CaptureIndex> for usize {
+    fn from(value: CaptureIndex) -> Self {
+        value.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueIndex {
+    Register(RegisterIndex),
+    Constant(ConstantIndex),
+    Capture(CaptureIndex),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionIndex(pub VecIndex);
+
+impl From<FunctionIndex> for usize {
+    fn from(value: FunctionIndex) -> Self {
+        value.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpCode {
     /// Call the function in register .0,
     /// Putting the result into the register .1
     /// Arguments are given after the call
-    Call(RegisterIndex, RegisterIndex),
+    Call(ValueIndex, RegisterIndex),
     /// Create a tail call with the function in the given register
     /// Followed by `CallArgument`s
-    TailCall(RegisterIndex),
-
-    CallArgument(RegisterIndex),
+    TailCall(ValueIndex),
+    CallArgument(ValueIndex),
+    /// Create a recursive let's pointer
+    DeclareRecursive(RegisterIndex),
+    /// Fill a recursive let's predeclared symbol in 1 with an actual value from 0
+    FillRecursive(ValueIndex, RegisterIndex),
     /// Return the value in the given register
-    Return(RegisterIndex),
+    Return(ValueIndex),
     /// Unconditionally jump with the given offset
     Jump(VecOffset),
-    /// Check the boolean in .0, if false, jump to the given position, otherwise continue
-    JumpToPositionIfFalse(RegisterIndex, VecOffset),
+    /// Check the boolean in .0, if false, jump by the given offset, otherwise continue
+    JumpToPositionIfFalse(ValueIndex, VecOffset),
     /// Copy the value from 0 to 1
-    CopyValue(RegisterIndex, RegisterIndex),
-    /// Load the constant from the constants array at 0 to the position 1
-    LoadConstant(RegisterIndex, RegisterIndex),
+    CopyValue(ValueIndex, RegisterIndex),
+
     /// Free the value at the given register
     CloseValue(RegisterIndex),
     /// Create closure. Takes the index of the function in the current chunk,
     /// puts the result in the register .1
-    CreateClosure(VecIndex, VecIndex),
-    /// Capture a value from the current function
-    CaptureValue(RegisterIndex),
+    CreateClosure(FunctionIndex, RegisterIndex),
+    /// Capture a value from the currently running function and put it
+    /// into the closure being created
+    CaptureValue(ValueIndex),
     /// Unconditional crash
     Crash,
     /// Insert this native function into the given register
     InsertNativeFunction(NativeFunction, RegisterIndex),
-}
-
-impl<A, B> OpCode<A, B>
-where
-    A: Clone,
-    B: Clone,
-{
-    pub fn convert<C, D>(
-        &self,
-        a_to_c: &mut impl FnMut(A) -> C,
-        b_to_d: &mut impl FnMut(B) -> D,
-    ) -> OpCode<C, D> {
-        match self {
-            OpCode::Call(a, b) => OpCode::Call(b_to_d(a.clone()), b_to_d(b.clone())),
-            OpCode::TailCall(a) => OpCode::TailCall(b_to_d(a.clone())),
-            OpCode::CallArgument(a) => OpCode::CallArgument(b_to_d(a.clone())),
-            OpCode::Return(a) => OpCode::Return(b_to_d(a.clone())),
-            OpCode::Jump(a) => OpCode::Jump(a_to_c(a.clone())),
-            OpCode::JumpToPositionIfFalse(a, b) => {
-                OpCode::JumpToPositionIfFalse(b_to_d(a.clone()), a_to_c(b.clone()))
-            }
-            OpCode::CopyValue(a, b) => OpCode::CopyValue(b_to_d(a.clone()), b_to_d(b.clone())),
-            OpCode::LoadConstant(a, b) => {
-                OpCode::LoadConstant(a_to_c(a.clone()), b_to_d(b.clone()))
-            }
-            OpCode::CloseValue(a) => OpCode::CloseValue(a_to_c(a.clone())),
-            OpCode::CreateClosure(a, b) => {
-                OpCode::CreateClosure(a_to_c(a.clone()), b_to_d(b.clone()))
-            }
-            OpCode::CaptureValue(a) => OpCode::CaptureValue(b_to_d(a.clone())),
-            OpCode::Crash => OpCode::Crash,
-            OpCode::InsertNativeFunction(a, b) => {
-                OpCode::InsertNativeFunction(a.clone(), b_to_d(b.clone()))
-            }
-        }
-    }
 }
