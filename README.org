@@ -19,7 +19,7 @@ A dict is defined as <a: b, c: d>
 {} <- introduces a new scope
 () <- doesn't introduce a new scope
 The result of these blocks is either the last value, or nil if empty
-Expressions are separated inside the blocks with ;:
+Expressions are separated inside the blocks with ;
 
 ** Assignment:
 A value can be assigned with "let":
@@ -29,7 +29,7 @@ multiple assignments can be done in a let statement, with the last one being the
 
 Recursive assignment, where the expression being assigned to a variable has access to that variable
 can be defined with
-letrec fac |n| n `+ (fac (n `- 1))
+letrec fac |n| n `+ (fac n `- 1)
 
 ** Function call
 Functions are called by a symbol, then arguments:
@@ -49,16 +49,16 @@ This binds the given symbols to the corresponding values of those symbols in the
 
 ** Symbols can be called to extract stuff from dictionaries
 
-with d = {a: 2}:
-$a d = 2
+{let d {a: 2};
+     $a d = 2}
 (or, with infix:
 d`$a = 2
 )
 
-** Conditions are done with
+** Conditions are done like
 cond {
-a ~ 3,
-b ~ 4,
+a ~ 3;
+b ~ 4;
 else 5
 }
 
@@ -101,7 +101,6 @@ s
 |x, y| a b!
 
 * Things to do
-- [ ] Add in structs
 - [X] Modify tail calls to recursive functions use the same stack frame?? (maybe not reasonable)
 - [ ] Add in a trait system (similar to rust/elixir behaviours)
 - [X] Add in native function calls (sum and stuff)
