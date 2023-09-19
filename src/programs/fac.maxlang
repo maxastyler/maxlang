@@ -1,0 +1,7 @@
+{letrec fac |n| fac_inner n 1,
+	fac_inner |n total| {
+	cond {
+	     n `lte 0 ~ total;
+	     else fac_inner (n `- 1) (n `* total)
+	}};
+ fac 1000}

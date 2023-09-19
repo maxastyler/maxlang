@@ -11,13 +11,14 @@ use crate::{expression::Literal, opcode::OpCode};
 pub enum ValueError {
     NotANumber,
     NotAClosure,
+    NotAList,
     TooManyArguments,
     NoNativeSymbol,
 }
 
 type Result<Ok> = std::result::Result<Ok, ValueError>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Function {
     pub opcodes: Vec<OpCode>,
     pub constants: Vec<Value>,
@@ -27,7 +28,7 @@ pub struct Function {
     pub num_registers: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ClosureType {
     Function(Rc<Function>),
     NativeFunction(NativeFunction),
@@ -42,7 +43,7 @@ impl ClosureType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Closure {
     pub function: ClosureType,
     pub captures: Vec<Placeholder>,
@@ -71,13 +72,13 @@ impl Closure {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Object {
     Closure(Rc<Closure>),
     String(Rc<String>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Placeholder {
     Placeholder(Rc<RefCell<Value>>),
     Value(Value),
@@ -92,14 +93,14 @@ impl Placeholder {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Value {
     Number(f64),
     Bool(bool),
     Nil,
     Uninit,
     List(Vector<Value>),
-    Dictionary(HashMap<Value, Value>),
+    // Dictionary(HashMap<Value, Value>),
     NativeFunction(NativeFunction),
     Object(Object),
 }
@@ -111,8 +112,8 @@ impl Debug for Value {
             Value::Bool(b) => f.write_fmt(format_args!("{:?}", b)),
             Value::Nil => f.write_fmt(format_args!("nil")),
             Value::Uninit => f.write_str("Uninit"),
-            Value::List(_) => todo!(),
-            Value::Dictionary(_) => todo!(),
+            Value::List(l) => f.write_fmt(format_args!("{:?}", l)),
+            // Value::Dictionary(_) => todo!(),
             Value::NativeFunction(nf) => f.write_fmt(format_args!("{:?}", nf)),
             Value::Object(o) => f.write_fmt(format_args!("{:?}", o)),
         }
@@ -127,13 +128,27 @@ impl<'a> From<Literal<'a>> for Value {
             Literal::Number(n) => Value::Number(n),
             Literal::String(s) => todo!(),
             Literal::Quoted(_) => todo!(),
-            Literal::List(_) => todo!(),
+            Literal::List(l) => Value::List(
+                l.iter()
+                    .map(|v| match v.expression.clone() {
+                        crate::expression::Expression::Literal(l) => l.into(),
+                        _ => panic!("Can't construct list literal from non const expressions"),
+                    })
+                    .collect(),
+            ),
             Literal::Dictionary(_) => todo!(),
         }
     }
 }
 
 impl Value {
+    pub fn list(&self) -> Result<Vector<Value>> {
+	match self {
+	    Value::List(v) => Ok(v.clone()),
+	    _ => Err(ValueError::NotAList)
+	}
+    }
+    
     pub fn number(&self) -> Result<f64> {
         match self {
             Value::Number(i) => Ok(*i),
