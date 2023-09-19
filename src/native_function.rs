@@ -78,7 +78,10 @@ impl NativeFunction {
             NativeFunction::Multiply => Ok(Value::Number(args[0].number()? * args[1].number()?)),
             NativeFunction::Quotient => Ok(Value::Number(args[0].number()? / args[1].number()?)),
             NativeFunction::Print => {
-                println!("{:?}", args[0]);
+                match args[0].clone() {
+                    Value::Object(Object::String(s)) => println!("{}", s),
+                    x => println!("{:?}", x),
+                }
                 Ok(args[0].clone())
             }
             NativeFunction::Index => {

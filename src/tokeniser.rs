@@ -177,7 +177,7 @@ impl<'a> Token<'a> {
                         return Err(TokeniserError::OpenString);
                     }
                 }
-                Ok(Some((&source[..offset + 2], offset + 2)))
+                Ok(Some((&source[1..offset + 1], offset + 2)))
             }
             _ => Ok(None),
         }

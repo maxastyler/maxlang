@@ -126,7 +126,7 @@ impl<'a> From<Literal<'a>> for Value {
             Literal::Bool(b) => Value::Bool(b),
             Literal::Nil => Value::Nil,
             Literal::Number(n) => Value::Number(n),
-            Literal::String(s) => todo!(),
+            Literal::String(s) => Value::Object(Object::String(Rc::new(s))),
             Literal::Quoted(_) => todo!(),
             Literal::List(l) => Value::List(
                 l.iter()
@@ -143,12 +143,12 @@ impl<'a> From<Literal<'a>> for Value {
 
 impl Value {
     pub fn list(&self) -> Result<Vector<Value>> {
-	match self {
-	    Value::List(v) => Ok(v.clone()),
-	    _ => Err(ValueError::NotAList)
-	}
+        match self {
+            Value::List(v) => Ok(v.clone()),
+            _ => Err(ValueError::NotAList),
+        }
     }
-    
+
     pub fn number(&self) -> Result<f64> {
         match self {
             Value::Number(i) => Ok(*i),
