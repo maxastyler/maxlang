@@ -17,6 +17,9 @@ pub enum NativeFunction {
 impl NativeFunction {
     pub fn resolve_symbol(symbol: &Symbol) -> Option<NativeFunction> {
         match &symbol.0[..] {
+            "+" => Some(NativeFunction::Sum),
+            "lt" => Some(NativeFunction::LessThan),
+            "-" => Some(NativeFunction::Difference),
             _ => None,
         }
     }
@@ -24,15 +27,20 @@ impl NativeFunction {
     /// The number of arguments
     pub fn arguments(&self) -> usize {
         match self {
-            NativeFunction::LessThan => todo!(),
-            NativeFunction::Sum => todo!(),
-            NativeFunction::Difference => todo!(),
+            NativeFunction::LessThan => 2,
+            NativeFunction::Sum => 2,
+            NativeFunction::Difference => 2,
             NativeFunction::Multiply => todo!(),
         }
     }
 
     pub fn call(&self, args: Vec<Value>) -> std::result::Result<Value, RuntimeError> {
-        Err(RuntimeError::TooManyArguments)
+        match self {
+            NativeFunction::LessThan => Ok(Value::Bool(args[0].number()? < args[1].number()?)),
+            NativeFunction::Sum => Ok(Value::Number(args[0].number()? + args[1].number()?)),
+            NativeFunction::Difference => Ok(Value::Number(args[0].number()? - args[1].number()?)),
+            NativeFunction::Multiply => todo!(),
+        }
     }
 
     pub fn call_or_curry(

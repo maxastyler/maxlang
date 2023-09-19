@@ -12,6 +12,7 @@ pub enum ValueError {
     NotANumber,
     NotAClosure,
     TooManyArguments,
+    NoNativeSymbol,
 }
 
 type Result<Ok> = std::result::Result<Ok, ValueError>;
@@ -41,11 +42,17 @@ impl ClosureType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Closure {
     pub function: ClosureType,
     pub captures: Vec<Placeholder>,
     pub arguments: Vec<Value>,
+}
+
+impl Debug for Closure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Closure: {:?}", self.function))
+    }
 }
 
 impl Closure {
@@ -101,13 +108,13 @@ impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Number(n) => f.write_fmt(format_args!("{:?}", n)),
-            Value::Bool(_) => todo!(),
-            Value::Nil => todo!(),
-            Value::Uninit => todo!(),
+            Value::Bool(b) => f.write_fmt(format_args!("{:?}", b)),
+            Value::Nil => f.write_fmt(format_args!("nil")),
+            Value::Uninit => f.write_str("Uninit"),
             Value::List(_) => todo!(),
             Value::Dictionary(_) => todo!(),
-            Value::NativeFunction(_) => todo!(),
-            Value::Object(_) => todo!(),
+            Value::NativeFunction(nf) => f.write_fmt(format_args!("{:?}", nf)),
+            Value::Object(o) => f.write_fmt(format_args!("{:?}", o)),
         }
     }
 }

@@ -26,8 +26,16 @@ type Result<T> = std::result::Result<T, RuntimeError>;
 impl<'a> Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
-            "Frame (return_pos: {:?}, pointer: {:?}){{\nfunction: {:?}}}",
-            self.return_position, self.pointer, self.function
+            "Frame (return_pos: {:?}\npointer: {:?}\nregisters: {:?}\ncaptures: {:?}){{\nfunction: {}}}",
+            self.return_position,
+            self.pointer,
+            self.registers,
+	    self.captures,
+            self.function
+                .opcodes
+                .iter()
+                .enumerate()
+                .fold("".into(), |a, v| format!("{}\n{:?}", a, v)),
         ))
     }
 }
@@ -53,7 +61,7 @@ impl Frame {
                         .captures
                         .iter()
                         .map(|x| match x {
-                            Placeholder::Placeholder(_) => unreachable!(),
+                            Placeholder::Placeholder(v) => v.borrow().clone(),
                             Placeholder::Value(v) => v.clone(),
                         })
                         .collect(),
@@ -89,12 +97,21 @@ impl Frame {
     }
 
     pub fn run_fill_recursive(&mut self, value_index: ValueIndex, register_index: RegisterIndex) {
-        self.registers[register_index.0 as usize] = self.get_value_index(value_index);
+        let new_v = match self.get_value_index(value_index) {
+            Placeholder::Placeholder(v) => v.borrow().clone(),
+            Placeholder::Value(v) => v,
+        };
+        match self.registers.get_mut(register_index.0 as usize).unwrap() {
+            Placeholder::Placeholder(cell) => {
+                cell.replace(new_v);
+            }
+            Placeholder::Value(_) => (),
+        };
         self.pointer += 1;
     }
 
     pub fn run_jump(&mut self, offset: isize) {
-        self.pointer.saturating_add_signed(offset);
+        self.pointer = self.pointer.saturating_add_signed(offset);
     }
 
     pub fn run_jump_to_position_if_false(
@@ -106,8 +123,10 @@ impl Frame {
             Value::Bool(b) => b,
             _ => return Err(RuntimeError::NotABoolean),
         };
-        if b {
+        if !b {
             self.run_jump(offset);
+        } else {
+            self.pointer += 1;
         }
         Ok(())
     }

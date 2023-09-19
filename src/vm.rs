@@ -10,7 +10,7 @@ use crate::{
     frame::Frame,
     native_function::{self, NativeFunction},
     opcode::{FunctionIndex, OpCode, RegisterIndex, ValueIndex},
-    value::{Closure, ClosureType, Function, Object, Placeholder, Value},
+    value::{Closure, ClosureType, Function, Object, Placeholder, Value, ValueError},
 };
 
 #[derive(Clone, Debug)]
@@ -23,6 +23,13 @@ pub enum RuntimeError {
     TooManyArguments,
     NotEnoughArguments,
     Crash,
+    ValueError(ValueError),
+}
+
+impl From<ValueError> for RuntimeError {
+    fn from(value: ValueError) -> Self {
+        RuntimeError::ValueError(value)
+    }
 }
 
 pub enum CallType {
@@ -81,20 +88,37 @@ impl VM {
     pub fn run_tail_call(&mut self, function_index: ValueIndex) -> Result<Option<Value>> {
         self.increase_pointer(1);
         let args = self.get_call_arguments(None)?;
-        let function = self.last_frame()?.get_value_index(function_index);
+        let function = match self.last_frame()?.get_value_index(function_index) {
+            Placeholder::Placeholder(v) => v.borrow().clone(),
+            Placeholder::Value(v) => v,
+        };
         let position = self.last_frame()?.return_position;
         self.pop_frame();
         match function {
-            Placeholder::Value(Value::Object(Object::Closure(closure))) => {
+            Value::Object(Object::Closure(closure)) => {
                 let new_closure = Rc::new(closure.add_arguments(args).unwrap());
                 if new_closure.arguments.len() == new_closure.function.arity() {
-                    self.create_and_push_new_frame(new_closure, position);
-                    Ok(None)
+                    match new_closure.function.clone() {
+                        ClosureType::Function(_) => {
+                            self.create_and_push_new_frame(new_closure, position);
+                            Ok(None)
+                        }
+                        ClosureType::NativeFunction(nf) => {
+                            let result = nf.call(new_closure.arguments.clone())?;
+                            if self.frames.is_empty() {
+                                Ok(Some(result))
+                            } else {
+                                self.last_frame_mut()?.registers[position] =
+                                    Placeholder::Value(result);
+                                Ok(None)
+                            }
+                        }
+                    }
                 } else {
                     Err(RuntimeError::NotEnoughArguments)
                 }
             }
-            Placeholder::Value(Value::NativeFunction(nf)) => {
+            Value::NativeFunction(nf) => {
                 let result = nf.call(args)?;
                 if self.frames.is_empty() {
                     Ok(Some(result))
@@ -103,8 +127,7 @@ impl VM {
                     Ok(None)
                 }
             }
-            Placeholder::Placeholder(_) => Err(RuntimeError::ValueNotSet),
-            _ => Err(RuntimeError::NotAFunction),
+            x => Err(RuntimeError::NotAFunction),
         }
     }
 
@@ -119,7 +142,7 @@ impl VM {
             Placeholder::Value(Value::Object(Object::Closure(closure))) => {
                 let args = self.get_call_arguments(Some(closure.arguments_needed()))?;
                 let new_closure = closure.add_arguments(args).unwrap();
-                if closure.arguments_needed() == 0 {
+                if new_closure.arguments_needed() == 0 {
                     self.create_and_push_new_frame(Rc::new(new_closure), result_index.0 as usize);
                 } else {
                     self.last_frame_mut()?.registers[result_index.0 as usize] =
@@ -133,7 +156,9 @@ impl VM {
                     nf.call_or_curry(args)?;
             }
             Placeholder::Placeholder(_) => return Err(RuntimeError::ValueNotSet),
-            _ => return Err(RuntimeError::NotAFunction),
+            x => {
+                return Err(RuntimeError::NotAFunction);
+            }
         };
         Ok(None)
     }
@@ -155,12 +180,10 @@ impl VM {
                     }
                     OpCode::TailCall(function_index) => self.run_tail_call(function_index),
                     OpCode::DeclareRecursive(index) => {
-                        self.increase_pointer(1);
                         self.last_frame_mut()?.run_declare_recursive(index);
                         Ok(None)
                     }
                     OpCode::FillRecursive(value_index, register_index) => {
-                        self.increase_pointer(1);
                         self.last_frame_mut()?
                             .run_fill_recursive(value_index, register_index);
                         Ok(None)
@@ -168,23 +191,19 @@ impl VM {
                     OpCode::CallArgument(_) => unreachable!(),
                     OpCode::Return(value_index) => self.run_return(value_index),
                     OpCode::Jump(distance) => {
-                        self.increase_pointer(1);
                         self.last_frame_mut()?.run_jump(distance as isize);
                         Ok(None)
                     }
                     OpCode::JumpToPositionIfFalse(check_index, jump) => {
-                        self.increase_pointer(1);
                         self.last_frame_mut()?
                             .run_jump_to_position_if_false(check_index, jump as isize)?;
                         Ok(None)
                     }
                     OpCode::CopyValue(value_from, value_to) => {
-                        self.increase_pointer(1);
                         self.last_frame_mut()?.run_copy_value(value_from, value_to);
                         Ok(None)
                     }
                     OpCode::CloseValue(index) => {
-                        self.increase_pointer(1);
                         self.last_frame_mut()?.run_close_value(index);
                         Ok(None)
                     }
@@ -195,7 +214,6 @@ impl VM {
                     OpCode::CaptureValue(_) => unreachable!(),
                     OpCode::Crash => Err(RuntimeError::Crash),
                     OpCode::InsertNativeFunction(native_function, index) => {
-                        self.increase_pointer(1);
                         self.last_frame_mut()?
                             .run_insert_native_function(native_function, index);
                         Ok(None)
@@ -251,7 +269,6 @@ impl VM {
     /// Creates a new frame from a closure and arguments in the VM's temporary storage
     /// Pushes the new frame onto the current stack of frames
     fn create_and_push_new_frame(&mut self, closure: Rc<Closure>, result_slot: usize) {
-        self.increase_pointer(1);
         let new_frame = Frame::new_from_closure(closure, result_slot);
         self.frames.push(new_frame);
     }
