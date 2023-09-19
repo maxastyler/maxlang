@@ -34,20 +34,33 @@ impl<'a> Debug for Frame {
 
 impl Frame {
     pub fn new_from_closure(closure: Rc<Closure>, return_position: usize) -> Frame {
-        let mut registers = vec![Placeholder::Value(Value::Uninit); closure.function.num_registers];
-        registers.splice(
-            0..closure.function.arity,
-            closure
-                .arguments
-                .iter()
-                .map(|x| Placeholder::Value(x.clone())),
-        );
-        Frame {
-            pointer: 0,
-            registers,
-            function: closure.function,
-            captures: closure.captures.clone(),
-            return_position,
+        match closure.function.clone() {
+            crate::value::ClosureType::Function(func) => {
+                let mut registers = vec![Placeholder::Value(Value::Uninit); func.num_registers];
+                registers.splice(
+                    0..func.arity,
+                    closure
+                        .arguments
+                        .iter()
+                        .map(|x| Placeholder::Value(x.clone())),
+                );
+                Frame {
+                    pointer: 0,
+                    inside_call: None,
+                    registers,
+                    function: func,
+                    captures: closure
+                        .captures
+                        .iter()
+                        .map(|x| match x {
+                            Placeholder::Placeholder(_) => unreachable!(),
+                            Placeholder::Value(v) => v.clone(),
+                        })
+                        .collect(),
+                    return_position,
+                }
+            }
+            crate::value::ClosureType::NativeFunction(_) => unreachable!(),
         }
     }
 
@@ -61,11 +74,11 @@ impl Frame {
 
     pub fn get_value_index(&self, value_index: ValueIndex) -> Placeholder {
         match value_index {
-            ValueIndex::Register(reg) => self.registers[reg.0 as usize],
+            ValueIndex::Register(reg) => self.registers[reg.0 as usize].clone(),
             ValueIndex::Constant(con) => {
-                Placeholder::Value(self.function.constants[con.0 as usize])
+                Placeholder::Value(self.function.constants[con.0 as usize].clone())
             }
-            ValueIndex::Capture(cap) => Placeholder::Value(self.captures[cap.0 as usize]),
+            ValueIndex::Capture(cap) => Placeholder::Value(self.captures[cap.0 as usize].clone()),
         }
     }
 
@@ -128,6 +141,5 @@ impl Frame {
                 self.inside_call = Some((function_index, Some(result_index)));
             }
         };
-	
     }
 }

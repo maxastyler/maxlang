@@ -7,7 +7,8 @@ use std::{cell::RefCell, rc::Rc};
 use crate::native_function::NativeFunction;
 use crate::{expression::Literal, opcode::OpCode};
 
-enum ValueError {
+#[derive(Debug, Clone)]
+pub enum ValueError {
     NotANumber,
     NotAClosure,
     TooManyArguments,
@@ -25,6 +26,7 @@ pub struct Function {
     pub num_registers: usize,
 }
 
+#[derive(Debug, Clone)]
 pub enum ClosureType {
     Function(Rc<Function>),
     NativeFunction(NativeFunction),
@@ -47,6 +49,10 @@ pub struct Closure {
 }
 
 impl Closure {
+    pub fn arguments_needed(&self) -> usize {
+        self.function.arity() - self.arguments.len()
+    }
+
     pub fn add_arguments(&self, args: Vec<Value>) -> Result<Closure> {
         if args.len() + self.arguments.len() > self.function.arity() {
             Err(ValueError::TooManyArguments)
