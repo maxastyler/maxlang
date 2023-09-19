@@ -9,9 +9,18 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum NativeFunction {
     LessThan,
+    GreaterThan,
+    Equal,
+    GreaterThanEqual,
+    LessThanEqual,
     Sum,
     Difference,
     Multiply,
+    Quotient,
+    Print,
+    Index,
+    Push,
+    Set,
 }
 
 impl NativeFunction {
@@ -19,7 +28,17 @@ impl NativeFunction {
         match &symbol.0[..] {
             "+" => Some(NativeFunction::Sum),
             "lt" => Some(NativeFunction::LessThan),
-            "-" => Some(NativeFunction::Difference),
+            "lte" => Some(Self::LessThanEqual),
+            "gt" => Some(Self::GreaterThan),
+            "gte" => Some(Self::GreaterThanEqual),
+            "=" => Some(Self::Equal),
+            "/" => Some(Self::Quotient),
+            "*" => Some(Self::Multiply),
+            "-" => Some(Self::Difference),
+            "print" => Some(Self::Print),
+            "ind" => Some(Self::Index),
+            "push" => Some(Self::Push),
+            "set" => Some(Self::Set),
             _ => None,
         }
     }
@@ -27,10 +46,19 @@ impl NativeFunction {
     /// The number of arguments
     pub fn arguments(&self) -> usize {
         match self {
-            NativeFunction::LessThan => 2,
-            NativeFunction::Sum => 2,
-            NativeFunction::Difference => 2,
-            NativeFunction::Multiply => todo!(),
+            Self::Set => 3,
+            NativeFunction::LessThan
+            | Self::GreaterThan
+            | NativeFunction::Difference
+            | NativeFunction::Equal
+            | NativeFunction::GreaterThanEqual
+            | NativeFunction::LessThanEqual
+            | NativeFunction::Multiply
+            | NativeFunction::Quotient
+            | NativeFunction::Sum
+            | Self::Index
+            | Self::Push => 2,
+            Self::Print => 1,
         }
     }
 
@@ -39,7 +67,34 @@ impl NativeFunction {
             NativeFunction::LessThan => Ok(Value::Bool(args[0].number()? < args[1].number()?)),
             NativeFunction::Sum => Ok(Value::Number(args[0].number()? + args[1].number()?)),
             NativeFunction::Difference => Ok(Value::Number(args[0].number()? - args[1].number()?)),
-            NativeFunction::Multiply => todo!(),
+            NativeFunction::GreaterThan => Ok(Value::Bool(args[0].number()? > args[1].number()?)),
+            NativeFunction::Equal => Ok(Value::Bool(args[0] == args[1])),
+            NativeFunction::GreaterThanEqual => {
+                Ok(Value::Bool(args[0].number()? >= args[1].number()?))
+            }
+            NativeFunction::LessThanEqual => {
+                Ok(Value::Bool(args[0].number()? <= args[1].number()?))
+            }
+            NativeFunction::Multiply => Ok(Value::Number(args[0].number()? * args[1].number()?)),
+            NativeFunction::Quotient => Ok(Value::Number(args[0].number()? / args[1].number()?)),
+            NativeFunction::Print => {
+                println!("{:?}", args[0]);
+                Ok(args[0].clone())
+            }
+            NativeFunction::Index => {
+                let l = args[0].list()?;
+                Ok(l[args[1].number()? as usize].clone())
+            }
+            NativeFunction::Push => {
+                let mut l = args[0].list()?.clone();
+                l.push_back(args[1].clone());
+                Ok(Value::List(l))
+            }
+            NativeFunction::Set => {
+                let mut l = args[0].list()?.clone();
+                l.set(args[1].number()? as usize, args[2].clone());
+                Ok(Value::List(l))
+            }
         }
     }
 
