@@ -11,7 +11,7 @@ mod value;
 mod vm;
 
 fn main() {
-    let src = include_str!("programs/fac.maxlang");
+    let src = include_str!("programs/lists.maxlang");
     let ts = tokeniser::Token::tokenise_source(src, "")
         .map(|x| x.unwrap())
         .collect::<Vec<_>>();

@@ -102,7 +102,7 @@ impl NativeFunction {
         &self,
         args: Vec<Value>,
     ) -> std::result::Result<Placeholder, RuntimeError> {
-        Ok(match args.len().cmp(&args.len()) {
+        Ok(match args.len().cmp(&self.arguments()) {
             std::cmp::Ordering::Less => Placeholder::Value(Value::Object(Object::Closure(
                 Rc::new(self.to_closure(args)),
             ))),
