@@ -4,13 +4,14 @@ use crate::{
     expression::{Block, Expression, Let, Literal, LocatedExpression, Symbol},
     native_function::NativeFunction,
     opcode::{CaptureIndex, ConstantIndex, FunctionIndex, OpCode, RegisterIndex, ValueIndex},
-    value::{Function, Placeholder, Value},
+    value::{Function, Placeholder, Value, ValueError},
 };
 
 #[derive(Debug)]
 pub enum CompilerError {
     NoFrames,
     NoElementsInLet,
+    NoNativeSymbol,
 }
 
 type Result<T> = std::result::Result<T, CompilerError>;
@@ -260,8 +261,15 @@ impl Compiler {
             .compile_literal(position, literal)
     }
 
-    fn resolve_native_symbol(&mut self, symbol: &Symbol) -> Result<RegisterIndex> {
-        todo!()
+    fn resolve_native_symbol(
+        &mut self,
+        position: Option<RegisterIndex>,
+        symbol: &Symbol,
+    ) -> Result<RegisterIndex> {
+        let func = NativeFunction::resolve_symbol(symbol).ok_or(CompilerError::NoNativeSymbol)?;
+        let register = position.unwrap_or_else(|| self.reserve_next_free_register().unwrap().0);
+        self.push_opcode(OpCode::InsertNativeFunction(func, register.clone()));
+        Ok(register)
     }
 
     fn compile_symbol(
@@ -281,7 +289,9 @@ impl Compiler {
                 None => Ok(i),
             }
         } else {
-            Ok(ValueIndex::Register(self.resolve_native_symbol(symbol)?))
+            Ok(ValueIndex::Register(
+                self.resolve_native_symbol(position, symbol)?,
+            ))
         }
     }
 

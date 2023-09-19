@@ -11,7 +11,8 @@ mod value;
 mod vm;
 
 fn main() {
-    let ts = tokeniser::Token::tokenise_source("cond {false ~ 3; else 2}", "")
+    let src = include_str!("programs/fac.maxlang");
+    let ts = tokeniser::Token::tokenise_source(src, "")
         .map(|x| x.unwrap())
         .collect::<Vec<_>>();
     let (_, exp) = parser::parse_expression(&ts).unwrap();
@@ -19,8 +20,8 @@ fn main() {
     c.compile_expression(None, &exp, true).unwrap();
     let f = c.frame_to_function();
     let mut vm = VM::from_bare_function(f);
-    println!("{:?}", vm);
     loop {
+	// println!("{:?}", vm);
         match vm.step() {
             Ok(Some(v)) => {
                 println!("GOT A VALUE: {:?}", v);

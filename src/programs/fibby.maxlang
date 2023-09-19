@@ -1,7 +1,0 @@
-{fn fib (fib, n) {
-cond {
-     n `< 2 => 1,
-     {fib fib {n `- 1}} `+ {fib fib {n `- 2}}}
-};
-fib fib 35
-}
