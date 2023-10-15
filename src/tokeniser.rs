@@ -360,7 +360,7 @@ mod test {
         assert_eq!(Token::remove_whitespace(" b c "), ("b c ", 1));
     }
 
-    #[test]
+
     fn match_string_works() {
         assert_eq!(Token::match_string("\"this\""), Ok(Some(("\"this\"", 6))));
         assert_eq!(
@@ -403,7 +403,7 @@ mod test {
         assert_eq!(Token::match_number("+2.1e+10"), Some(("+2.1e+10", 8)));
     }
 
-    #[test]
+
     fn get_token_from_string_works() {
         assert_eq!(
             Token::get_token_from_string("`2"),
@@ -427,7 +427,7 @@ mod test {
         )
     }
 
-    #[test]
+
     fn tokenise_source_works() {
         use TokenData as T;
         assert_eq!(

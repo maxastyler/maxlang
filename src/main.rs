@@ -3,13 +3,13 @@ use crate::{compiler::Compiler, vm::VM};
 mod compiler;
 mod expression;
 mod frame;
+mod heap;
 mod native_function;
 mod opcode;
 mod parser;
 mod tokeniser;
 mod value;
 mod vm;
-mod heap;
 
 fn main() {
     let src = include_str!("programs/hello_world.maxlang");
@@ -22,7 +22,7 @@ fn main() {
     let f = c.frame_to_function();
     let mut vm = VM::from_bare_function(f);
     loop {
-	// println!("{:?}", vm);
+        // println!("{:?}", vm);
         match vm.step() {
             Ok(Some(v)) => {
                 println!("GOT A VALUE: {:?}", v);
