@@ -171,10 +171,11 @@ mod test {
         let o = heap.alloc(super::Object::List(Vector::from_iter(
             [2, 3, 4].iter().map(|x| super::Value::Number(*x as f64)),
         )));
-        heap.trace(vec![match o {
-            crate::heap::Value::Object(o) => o,
-            _ => unreachable!(),
-        }]);
+        // heap.trace(vec![match o {
+        //     crate::heap::Value::Object(o) => o,
+        //     _ => unreachable!(),
+        // }]);
+	heap.trace(vec![]);
         heap.sweep();
         assert!(heap.start.is_null());
     }

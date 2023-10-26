@@ -10,6 +10,7 @@ mod parser;
 mod tokeniser;
 mod value;
 mod vm;
+mod memory;
 
 fn main() {
     let src = include_str!("programs/hello_world.maxlang");
